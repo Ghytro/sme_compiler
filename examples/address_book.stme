@@ -1,0 +1,18 @@
+syntax 0.0.1
+
+package addr_book
+
+struct Person {
+    string phoneNumber, contactName
+    optional int8 age
+    optional string email, homeAddress
+    optional char gender
+}
+
+struct AddressBook {
+    list[Person] contacts
+}
+
+struct MappedAddressBook {
+    map[string, Person] contacts
+}
