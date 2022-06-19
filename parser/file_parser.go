@@ -10,16 +10,25 @@ import (
 	"github.com/Ghytro/stme/helpers"
 )
 
+const (
+	lpStateUndefined = iota - 1
+	lpStateReadingSyntaxVer
+	lpStateReadingPackageName
+	lpStateReadingStructName
+	lpStateReadingStruct
+)
+
+type LineParserStateId int
+
 type LineParserState struct {
-	isReadingSyntax      bool
-	isReadingOptions     bool
-	isReadingPackageName bool
-	isReadingStruct      bool
+	stateId            LineParserStateId
+	currentPackageNode *AstTreeNode
+	currentStructNode  *AstTreeNode
 }
 
 func NewLineParserState() *LineParserState {
 	return &LineParserState{
-		isReadingSyntax: true,
+		stateId: lpStateReadingSyntaxVer,
 	}
 }
 
@@ -91,36 +100,79 @@ func beautifyLine(line string) string {
 }
 
 func parseLine(line string, ps *LineParserState) {
-	if ps.isReadingSyntax {
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			helpers.PrintError("wrong intendation for specifying syntax version")
-		}
-		if !strings.HasPrefix(line, "syntax") {
-			helpers.PrintError(
-				fmt.Sprintf(
-					"expected: 'syntax', but got: '%s'",
-					strings.Split(line, " ")[0],
-				),
-			)
-		}
+	switch ps.stateId {
 
-		splittedLine := strings.Split(line, " ")
-		if len(splittedLine) > 2 {
-			helpers.PrintError("version of syntax and the 'syntax' keyword must be separated with exactly one space")
-		}
-		syntaxVer := splittedLine[1]
-		re, err := regexp.Compile(`\d*.\d*.\d*`)
-		if err != nil {
-			log.Fatal("Debug: ", err)
-		}
-		if !re.Match([]byte(syntaxVer)) {
-			helpers.PrintError("incorrect version format of syntax")
-		}
-		ps.isReadingSyntax = false
-		return
+	case lpStateReadingSyntaxVer:
+		readSyntaxVersion(line, ps)
+
+	case lpStateReadingPackageName:
+		readPackageName(line, ps)
+
+	case lpStateReadingStructName:
+		readStructName(line, ps)
+
+	case lpStateReadingStruct:
+		readStruct(line, ps)
+	}
+}
+
+func checkZeroIndentation(line string) bool {
+	return !(strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t"))
+}
+
+func readSyntaxVersion(line string, ps *LineParserState) {
+	if !checkZeroIndentation(line) {
+		helpers.PrintError("wrong intendation for specifying syntax version")
+	}
+	if !strings.HasPrefix(line, "syntax") {
+		helpers.PrintError(
+			fmt.Sprintf(
+				"expected: 'syntax', but got: '%s'",
+				strings.Split(line, " ")[0],
+			),
+		)
 	}
 
-	if ps.isReadingOptions {
-
+	splittedLine := strings.Split(line, " ")
+	if len(splittedLine) > 2 {
+		helpers.PrintError("version of syntax and the 'syntax' keyword must be separated with exactly one space")
 	}
+	syntaxVer := splittedLine[1]
+	re, err := regexp.Compile(`\d*.\d*.\d*`)
+	if err != nil {
+		log.Fatal("Debug: ", err)
+	}
+	if !re.Match([]byte(syntaxVer)) {
+		helpers.PrintError("incorrect version format of syntax")
+	}
+	InitAstTree(syntaxVer)
+	ps.isReadingSyntax = false
+	ps.isReadingPackageName = true
+}
+
+func readPackageName(line string, ps *LineParserState) {
+	if !checkZeroIndentation(line) {
+		helpers.PrintError("wrong intendation for specifying package name")
+	}
+	if !strings.HasPrefix(line, "package") {
+		helpers.PrintError(
+			fmt.Sprintf(
+				"expected: 'package', but got: '%s'",
+				strings.Split(line, " ")[0],
+			),
+		)
+	}
+
+	splittedLine := strings.Split(line, " ")
+	if len(splittedLine) > 2 {
+		helpers.PrintError("package name should not contain spaces")
+	}
+	packageName := splittedLine[1]
+	ps.currentPackageNode = astTree.AddPackage(packageName)
+	ps.isReadingPackageName = false
+	ps.isReadingStructName = true
+}
+
+func readStruct(line string, ps *LineParserState) {
+
 }
