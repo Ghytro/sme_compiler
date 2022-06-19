@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	lpStateUndefined = iota - 1
+	lpStateUndefined = LineParserStateId(iota - 1)
 	lpStateReadingSyntaxVer
 	lpStateReadingPackageName
 	lpStateReadingStructName
@@ -19,6 +19,7 @@ const (
 )
 
 type LineParserStateId int
+type LineParserFunc func(string, *LineParserState) LineParserStateId
 
 type LineParserState struct {
 	stateId            LineParserStateId
@@ -99,28 +100,42 @@ func beautifyLine(line string) string {
 	return line
 }
 
+var parserFuncs = map[LineParserStateId]LineParserFunc{
+	lpStateReadingSyntaxVer:   readSyntaxVersion,
+	lpStateReadingPackageName: readPackageName,
+	lpStateReadingStructName:  readStructName,
+	lpStateReadingStruct:      readStruct,
+}
+
+// all the methods have the same signature, return value is the new state of parser
 func parseLine(line string, ps *LineParserState) {
-	switch ps.stateId {
-
-	case lpStateReadingSyntaxVer:
-		readSyntaxVersion(line, ps)
-
-	case lpStateReadingPackageName:
-		readPackageName(line, ps)
-
-	case lpStateReadingStructName:
-		readStructName(line, ps)
-
-	case lpStateReadingStruct:
-		readStruct(line, ps)
-	}
+	ps.stateId = parserFuncs[ps.stateId](line, ps)
 }
 
 func checkZeroIndentation(line string) bool {
 	return !(strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t"))
 }
 
-func readSyntaxVersion(line string, ps *LineParserState) {
+func printStateConflictError(expectedState LineParserStateId, gotState LineParserStateId) {
+	stateMessages := map[LineParserStateId]string{
+		lpStateReadingSyntaxVer:   "syntax version declaration",
+		lpStateReadingPackageName: "package declaration",
+		lpStateReadingStructName:  "struct declaration",
+		lpStateReadingStruct:      "struct field declaration",
+	}
+	helpers.PrintError(
+		fmt.Sprintf(
+			"expected: %s, but got: %s",
+			stateMessages[expectedState],
+			stateMessages[gotState],
+		),
+	)
+}
+
+func readSyntaxVersion(line string, ps *LineParserState) LineParserStateId {
+	if ps.stateId != lpStateReadingSyntaxVer {
+		printStateConflictError(lpStateReadingSyntaxVer, ps.stateId)
+	}
 	if !checkZeroIndentation(line) {
 		helpers.PrintError("wrong intendation for specifying syntax version")
 	}
@@ -138,7 +153,7 @@ func readSyntaxVersion(line string, ps *LineParserState) {
 		helpers.PrintError("version of syntax and the 'syntax' keyword must be separated with exactly one space")
 	}
 	syntaxVer := splittedLine[1]
-	re, err := regexp.Compile(`\d*.\d*.\d*`)
+	re, err := regexp.Compile(`[0-9]+.[0-9]+.[0-9]+`)
 	if err != nil {
 		log.Fatal("Debug: ", err)
 	}
@@ -146,33 +161,102 @@ func readSyntaxVersion(line string, ps *LineParserState) {
 		helpers.PrintError("incorrect version format of syntax")
 	}
 	InitAstTree(syntaxVer)
-	ps.isReadingSyntax = false
-	ps.isReadingPackageName = true
+	return lpStateReadingPackageName
 }
 
-func readPackageName(line string, ps *LineParserState) {
+func readPackageName(line string, ps *LineParserState) LineParserStateId {
+	if ps.stateId != lpStateReadingPackageName {
+		printStateConflictError(lpStateReadingPackageName, ps.stateId)
+	}
 	if !checkZeroIndentation(line) {
 		helpers.PrintError("wrong intendation for specifying package name")
 	}
+	splittedLine := strings.Split(line, " ")
 	if !strings.HasPrefix(line, "package") {
 		helpers.PrintError(
 			fmt.Sprintf(
 				"expected: 'package', but got: '%s'",
-				strings.Split(line, " ")[0],
+				splittedLine[0],
 			),
 		)
 	}
-
-	splittedLine := strings.Split(line, " ")
 	if len(splittedLine) > 2 {
 		helpers.PrintError("package name should not contain spaces")
 	}
 	packageName := splittedLine[1]
-	ps.currentPackageNode = astTree.AddPackage(packageName)
-	ps.isReadingPackageName = false
-	ps.isReadingStructName = true
+	if packageName == "" {
+		helpers.PrintError("package name should be separated from 'package' keyword with exactly one space")
+	}
+	var err error
+	ps.currentPackageNode, err = astTree.AddPackage(packageName)
+	if err != nil {
+		helpers.PrintError(fmt.Sprintf("package '%s' already exists", packageName))
+	}
+	return lpStateReadingStructName
 }
 
-func readStruct(line string, ps *LineParserState) {
+func readStructName(line string, ps *LineParserState) LineParserStateId {
+	if ps.stateId != lpStateReadingStructName {
+		printStateConflictError(lpStateReadingStructName, ps.stateId)
+	}
+	if !checkZeroIndentation(line) {
+		helpers.PrintError("wrong intendation for specifying package name")
+	}
+	splittedLine := strings.Split(line, " ")
+	if !strings.HasPrefix(line, "struct") {
+		helpers.PrintError(
+			fmt.Sprintf(
+				"expected: 'struct', but got: '%s'",
+				splittedLine[0],
+			),
+		)
+	}
+	structName := splittedLine[1]
+	if structName == "" {
+		helpers.PrintError("struct name should be separated from 'struct' keyword with exactly one space")
+	}
+	packageName := ps.currentPackageNode.value.(SmePackage).name
+	var err error
+	ps.currentStructNode, err = astTree.AddStruct(packageName, structName)
+	switch err {
+	case nil:
+		break
+	case errNoSuchPackage:
+		helpers.PrintError(
+			fmt.Sprintf(
+				"no such package: '%s'",
+				structName,
+			),
+		)
+	case errStructAlreadyExists:
+		helpers.PrintError(
+			fmt.Sprintf(
+				"struct '%s' already exists in package '%s'",
+				structName,
+				packageName,
+			),
+		)
+	default:
+		helpers.PrintError(
+			fmt.Sprintf(
+				"an error occured: %s",
+				err.Error(),
+			),
+		)
+	}
+	return lpStateReadingStruct
+}
 
+func readStruct(line string, ps *LineParserState) LineParserStateId {
+	if ps.stateId != lpStateReadingStruct {
+		printStateConflictError(lpStateReadingStruct, ps.stateId)
+	}
+	if line == "}" {
+		return lpStateReadingStructName
+	}
+	isOptional := false
+	if strings.HasPrefix(line, "optional") {
+		isOptional = true
+	}
+	return lpStateReadingStruct
 }

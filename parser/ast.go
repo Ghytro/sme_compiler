@@ -55,10 +55,10 @@ func InitAstTree(syntaxVer string) {
 
 // returns tree node that contains added package
 // if the package exists returns a node with existing package
-func (t *AstTree) AddPackage(packageName string) *AstTreeNode {
+func (t *AstTree) AddPackage(packageName string) (*AstTreeNode, error) {
 	for _, c := range t.root.children {
 		if c.value.(*SmePackage).name == packageName {
-			return c
+			return c, errPackageAlreadyExists
 		}
 	}
 	newPackageNode := &AstTreeNode{value: SmePackage{packageName}}
@@ -66,7 +66,7 @@ func (t *AstTree) AddPackage(packageName string) *AstTreeNode {
 		t.root.children,
 		newPackageNode,
 	)
-	return newPackageNode
+	return newPackageNode, nil
 }
 
 // returns tree node that contains added struct
@@ -84,7 +84,7 @@ func (t *AstTree) AddStruct(packageName string, structName string) (*AstTreeNode
 	}
 	for _, c := range packageNode.children {
 		if c.value.(SmeStruct).name == structName {
-			return c, nil
+			return nil, errStructAlreadyExists
 		}
 	}
 	newStructNode := &AstTreeNode{value: SmeStruct{name: structName}}
@@ -119,7 +119,7 @@ func (t *AstTree) AddStructField(packageName string, structName string, fieldNam
 	}
 	for _, c := range structNode.children {
 		if c.value.(SmeStructField).name == fieldName {
-			return c, nil
+			return nil, errFieldAlreadyExists
 		}
 	}
 
