@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"reflect"
+	"strings"
 )
 
 func Uint32Sum32Hash(ints ...uint32) (uint32, error) {
@@ -35,4 +36,19 @@ func HashValuesUint32(values ...interface{}) (uint32, error) {
 		return 0, err
 	}
 	return hash.Sum32(), nil
+}
+
+func RemoveExtraSpacesAroundStrings(modified string, strs ...string) string {
+	for _, s := range strs {
+		modified = strings.ReplaceAll(
+			strings.ReplaceAll(
+				modified,
+				" "+s,
+				s,
+			),
+			s+" ",
+			s,
+		)
+	}
+	return modified
 }

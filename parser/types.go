@@ -2,12 +2,109 @@ package parser
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Ghytro/stme/helpers"
 )
 
 var errNoDefaultValue = errors.New("type has no default value")
+var errIncorrectType = errors.New("incorrect type specified")
+var errListTypeIncorrectFormat = errors.New("incorrect declaration of list")
+var errMapTypeIncorrectFormat = errors.New("incorrect declaration of map")
+var primitiveTypeStringMapping = map[string]SmeType{
+	"int8":  &SmeInt8{},
+	"int16": &SmeInt16{},
+	"int32": &SmeInt32{},
+	"int64": &SmeInt64{},
+
+	"uint8":  &SmeUint8{},
+	"uint16": &SmeUint16{},
+	"uint32": &SmeUint32{},
+	"uint64": &SmeUint64{},
+
+	"float":  &SmeDouble{},
+	"double": &SmeDouble{},
+	"string": &SmeString{},
+	"bool":   &SmeBool{},
+	"byte":   &SmeByte{},
+	"char":   &SmeChar{},
+}
+
+func IsPrimitiveType(typeName string) bool {
+	_, err := ParsePrimitiveType(typeName)
+	return err == nil
+}
+
+func IsParametricType(typeName string) bool {
+	return strings.HasPrefix(typeName, "list") || strings.HasPrefix(typeName, "map")
+}
+
+func ParsePrimitiveType(typeName string) (SmeType, error) {
+	if smeType, ok := primitiveTypeStringMapping[typeName]; ok {
+		return smeType, nil
+	}
+	return nil, errIncorrectType
+}
+
+func ParseParametricType(packageName string, typeName string) (SmeType, error) {
+	var (
+		tb  SmeTypeBuilder
+		err error
+	)
+	if strings.HasPrefix(typeName, "list") {
+		tb.SetType(&SmeList{})
+		var (
+			paramStrType string
+			paramSmeType SmeType
+		)
+		_, err = fmt.Sscanf(typeName, "list[%s]", &paramStrType)
+		if err != nil {
+			return nil, errListTypeIncorrectFormat
+		}
+		paramSmeType, err = ParsePrimitiveType(paramStrType)
+		if err != nil {
+			paramSmeType, err = ParseParametricType(packageName, paramStrType)
+			if err != nil {
+
+			}
+		}
+		return tb.SetListValueType(paramSmeType).Done(), nil
+	}
+	if strings.HasPrefix(typeName, "map") {
+		tb.SetType(&SmeMap{})
+		var (
+			paramStrType []string  = make([]string, 2)
+			paramSmeType []SmeType = make([]SmeType, 2)
+		)
+		_, err = fmt.Sscanf(
+			typeName,
+			"map[%s,%s]",
+			&paramStrType[0],
+			&paramStrType[1],
+		)
+		if err != nil {
+			return nil, errMapTypeIncorrectFormat
+		}
+		for i, t := range paramStrType {
+			paramSmeType[i], err = ParsePrimitiveType(t)
+			if err != nil {
+				paramSmeType[i], err = ParseParametricType(t)
+				if err != nil {
+
+				}
+			}
+		}
+	}
+	return nil, errIncorrectType
+}
+
+var userDefinedTypesPool = make(map[string]struct{})
+
+func ParseUserDefinedType(typeName string) (UserDefinedStruct, error) {
+	node, err := astTree.GetStructNode(packageName, typeName)
+}
 
 type IdAble interface {
 	Id() uint32

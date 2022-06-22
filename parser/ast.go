@@ -70,7 +70,6 @@ func (t *AstTree) AddPackage(packageName string) (*AstTreeNode, error) {
 }
 
 // returns tree node that contains added struct
-// if the struct exists in this package returns a node with existing struct
 func (t *AstTree) AddStruct(packageName string, structName string) (*AstTreeNode, error) {
 	packageNode := new(AstTreeNode)
 	for _, c := range t.root.children {
@@ -93,6 +92,25 @@ func (t *AstTree) AddStruct(packageName string, structName string) (*AstTreeNode
 		newStructNode,
 	)
 	return newStructNode, nil
+}
+
+func (t *AstTree) GetStructNode(packageName string, structName string) (*AstTreeNode, error) {
+	packageNode := new(AstTreeNode)
+	for _, c := range t.root.children {
+		if c.value.(SmePackage).name == packageName {
+			packageNode = c
+			break
+		}
+	}
+	if packageNode == nil {
+		return nil, errNoSuchPackage
+	}
+	for _, c := range packageNode.children {
+		if c.value.(SmeStruct).name == structName {
+			return c, nil
+		}
+	}
+	return nil, errNoSuchStruct
 }
 
 func (t *AstTree) AddStructField(packageName string, structName string, fieldName string, fieldType SmeType) (*AstTreeNode, error) {

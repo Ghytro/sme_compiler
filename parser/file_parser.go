@@ -72,31 +72,16 @@ func beautifyLine(line string) string {
 	if commentPos != -1 {
 		line = line[commentPos:]
 	}
-
+	// removing indents
+	line = strings.ReplaceAll(line, "\t", "")
 	// removing extra spaces
 	for strings.Contains(line, "  ") {
 		line = strings.ReplaceAll(line, "  ", " ")
 	}
-	line = strings.TrimRight(line, " ")
+	line = strings.Trim(line, " ")
 
 	// removing extra spaces in assignment and field enumerating
-	line = strings.ReplaceAll(
-		strings.ReplaceAll(
-			strings.ReplaceAll(
-				strings.ReplaceAll(
-					line,
-					" =",
-					"=",
-				),
-				"= ",
-				"=",
-			),
-			" ,",
-			",",
-		),
-		", ",
-		",",
-	)
+	line = helpers.RemoveExtraSpacesAroundStrings(line, ",", "=", "[", "]")
 	return line
 }
 
@@ -110,10 +95,6 @@ var parserFuncs = map[LineParserStateId]LineParserFunc{
 // all the methods have the same signature, return value is the new state of parser
 func parseLine(line string, ps *LineParserState) {
 	ps.stateId = parserFuncs[ps.stateId](line, ps)
-}
-
-func checkZeroIndentation(line string) bool {
-	return !(strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t"))
 }
 
 func printStateConflictError(expectedState LineParserStateId, gotState LineParserStateId) {
@@ -135,9 +116,6 @@ func printStateConflictError(expectedState LineParserStateId, gotState LineParse
 func readSyntaxVersion(line string, ps *LineParserState) LineParserStateId {
 	if ps.stateId != lpStateReadingSyntaxVer {
 		printStateConflictError(lpStateReadingSyntaxVer, ps.stateId)
-	}
-	if !checkZeroIndentation(line) {
-		helpers.PrintError("wrong intendation for specifying syntax version")
 	}
 	if !strings.HasPrefix(line, "syntax") {
 		helpers.PrintError(
@@ -168,9 +146,6 @@ func readPackageName(line string, ps *LineParserState) LineParserStateId {
 	if ps.stateId != lpStateReadingPackageName {
 		printStateConflictError(lpStateReadingPackageName, ps.stateId)
 	}
-	if !checkZeroIndentation(line) {
-		helpers.PrintError("wrong intendation for specifying package name")
-	}
 	splittedLine := strings.Split(line, " ")
 	if !strings.HasPrefix(line, "package") {
 		helpers.PrintError(
@@ -198,9 +173,6 @@ func readPackageName(line string, ps *LineParserState) LineParserStateId {
 func readStructName(line string, ps *LineParserState) LineParserStateId {
 	if ps.stateId != lpStateReadingStructName {
 		printStateConflictError(lpStateReadingStructName, ps.stateId)
-	}
-	if !checkZeroIndentation(line) {
-		helpers.PrintError("wrong intendation for specifying package name")
 	}
 	splittedLine := strings.Split(line, " ")
 	if !strings.HasPrefix(line, "struct") {
@@ -254,9 +226,11 @@ func readStruct(line string, ps *LineParserState) LineParserStateId {
 	if line == "}" {
 		return lpStateReadingStructName
 	}
+	splittedLine := strings.Split(line, " ")
 	isOptional := false
-	if strings.HasPrefix(line, "optional") {
+	if splittedLine[0] == "optional" {
 		isOptional = true
 	}
+
 	return lpStateReadingStruct
 }
