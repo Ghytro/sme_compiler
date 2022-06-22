@@ -19,17 +19,19 @@ const (
 )
 
 type LineParserStateId int
-type LineParserFunc func(string, *LineParserState) LineParserStateId
+type LineParserFunc func(string, *LineParserState) (LineParserStateId, error)
 
 type LineParserState struct {
 	stateId            LineParserStateId
+	lineNumber         int
 	currentPackageNode *AstTreeNode
 	currentStructNode  *AstTreeNode
 }
 
 func NewLineParserState() *LineParserState {
 	return &LineParserState{
-		stateId: lpStateReadingSyntaxVer,
+		stateId:    lpStateReadingSyntaxVer,
+		lineNumber: 1,
 	}
 }
 
@@ -41,7 +43,10 @@ func ParseReaderContent(reader *bufio.Reader) error {
 		if string(line) == "" {
 			continue
 		}
-		parseLine(string(line), ps)
+		err = parseLine(string(line), ps)
+		if err != nil {
+			return err
+		}
 		line, err = readLine(reader)
 	}
 	if line != nil && err != nil {
@@ -72,16 +77,8 @@ func beautifyLine(line string) string {
 	if commentPos != -1 {
 		line = line[commentPos:]
 	}
-	// removing indents
-	line = strings.ReplaceAll(line, "\t", "")
-	// removing extra spaces
-	for strings.Contains(line, "  ") {
-		line = strings.ReplaceAll(line, "  ", " ")
-	}
-	line = strings.Trim(line, " ")
-
-	// removing extra spaces in assignment and field enumerating
-	line = helpers.RemoveExtraSpacesAroundStrings(line, ",", "=", "[", "]")
+	//removing extra tabulations in beginning and ending
+	line = strings.Trim(strings.Trim(line, " "), "\t")
 	return line
 }
 
@@ -93,95 +90,157 @@ var parserFuncs = map[LineParserStateId]LineParserFunc{
 }
 
 // all the methods have the same signature, return value is the new state of parser
-func parseLine(line string, ps *LineParserState) {
-	ps.stateId = parserFuncs[ps.stateId](line, ps)
+func parseLine(line string, ps *LineParserState) error {
+	var err error
+	ps.stateId, err = parserFuncs[ps.stateId](line, ps)
+	if err != nil {
+		return err
+	}
+	ps.lineNumber++
+	return nil
 }
 
-func printStateConflictError(expectedState LineParserStateId, gotState LineParserStateId) {
+type LineParserStateConflictErr struct {
+	expectedState LineParserStateId
+	gotState      LineParserStateId
+}
+
+func newLineParserStateConflictErr(
+	expected LineParserStateId,
+	got LineParserStateId) *LineParserStateConflictErr {
+	return &LineParserStateConflictErr{expected, got}
+}
+
+func (lpsce *LineParserStateConflictErr) Error() string {
 	stateMessages := map[LineParserStateId]string{
 		lpStateReadingSyntaxVer:   "syntax version declaration",
 		lpStateReadingPackageName: "package declaration",
 		lpStateReadingStructName:  "struct declaration",
 		lpStateReadingStruct:      "struct field declaration",
 	}
-	helpers.PrintError(
-		fmt.Sprintf(
-			"expected: %s, but got: %s",
-			stateMessages[expectedState],
-			stateMessages[gotState],
-		),
+	return fmt.Sprintf(
+		"expected: %s, but got: %s",
+		stateMessages[lpsce.expectedState],
+		stateMessages[lpsce.gotState],
 	)
 }
 
-func readSyntaxVersion(line string, ps *LineParserState) LineParserStateId {
+type ExpectedSyntaxErr struct {
+	SyntaxErr
+}
+
+func newExpectedSyntaxErr(line int, got string) (ese *ExpectedSyntaxErr) {
+	ese.line = line
+	ese.column = 0
+	ese.description = fmt.Sprintf("expected: 'syntax' keyword, got: %s", got)
+	return ese
+}
+
+type IncorrectSyntaxVerErr struct {
+	SyntaxErr
+}
+
+func newIncorrectSyntaxVerErr(line int, got string) (isve *IncorrectSyntaxVerErr) {
+	isve.line = line
+	isve.column = len("syntax") + 1
+	isve.description = fmt.Sprintf("incorrect syntax version specified: %s", got)
+	return isve
+}
+
+func readSyntaxVersion(line string, ps *LineParserState) (LineParserStateId, error) {
 	if ps.stateId != lpStateReadingSyntaxVer {
-		printStateConflictError(lpStateReadingSyntaxVer, ps.stateId)
+		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingSyntaxVer, ps.stateId)
 	}
 	if !strings.HasPrefix(line, "syntax") {
-		helpers.PrintError(
-			fmt.Sprintf(
-				"expected: 'syntax', but got: '%s'",
-				strings.Split(line, " ")[0],
-			),
-		)
+		return lpStateUndefined, newExpectedSyntaxErr(ps.lineNumber, strings.Split(line, " ")[0])
 	}
-
-	splittedLine := strings.Split(line, " ")
-	if len(splittedLine) > 2 {
-		helpers.PrintError("version of syntax and the 'syntax' keyword must be separated with exactly one space")
+	versionOffset := len("syntax")
+	for helpers.EqualsAny(line[versionOffset], ' ', '\t') {
+		versionOffset++
 	}
-	syntaxVer := splittedLine[1]
+	syntaxVer := line[versionOffset:]
 	re, err := regexp.Compile(`[0-9]+.[0-9]+.[0-9]+`)
 	if err != nil {
 		log.Fatal("Debug: ", err)
 	}
 	if !re.Match([]byte(syntaxVer)) {
-		helpers.PrintError("incorrect version format of syntax")
+		return lpStateUndefined, newIncorrectSyntaxVerErr(ps.lineNumber, syntaxVer)
 	}
 	InitAstTree(syntaxVer)
-	return lpStateReadingPackageName
+	return lpStateReadingPackageName, nil
 }
 
-func readPackageName(line string, ps *LineParserState) LineParserStateId {
+type ExpectedPackageKwErr struct {
+	SyntaxErr
+}
+
+func newExpectedPackageKwErr(line int, got string) (epke *ExpectedPackageKwErr) {
+	epke.line = line
+	epke.column = 0
+	epke.description = fmt.Sprintf("expected 'package' keyword, got: %s", got)
+	return epke
+}
+
+type IncorrectPackageNameErr struct {
+	SyntaxErr
+}
+
+func newIncorrectPackageNameErr(line int, got string) (ipne *IncorrectPackageNameErr) {
+	ipne.line = line
+	ipne.column = len("package")
+	ipne.description = fmt.Sprintf("incorrect format of package name: %s", got)
+	return ipne
+}
+
+func readPackageName(line string, ps *LineParserState) (LineParserStateId, error) {
 	if ps.stateId != lpStateReadingPackageName {
-		printStateConflictError(lpStateReadingPackageName, ps.stateId)
+		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingPackageName, ps.stateId)
 	}
-	splittedLine := strings.Split(line, " ")
 	if !strings.HasPrefix(line, "package") {
-		helpers.PrintError(
-			fmt.Sprintf(
-				"expected: 'package', but got: '%s'",
-				splittedLine[0],
-			),
-		)
+		return lpStateUndefined, newExpectedPackageKwErr(ps.lineNumber, strings.Split(line, " ")[0])
 	}
-	if len(splittedLine) > 2 {
-		helpers.PrintError("package name should not contain spaces")
+	packageNameOffset := len("package")
+	for helpers.EqualsAny(line[packageNameOffset], ' ', '\t') {
+		packageNameOffset++
 	}
-	packageName := splittedLine[1]
-	if packageName == "" {
-		helpers.PrintError("package name should be separated from 'package' keyword with exactly one space")
-	}
-	var err error
-	ps.currentPackageNode, err = astTree.AddPackage(packageName)
+	packageName := line[packageNameOffset:]
+	packageNameRe, err := regexp.Compile(`[A-Za-z][A-Za-z0-9_]+`)
 	if err != nil {
-		helpers.PrintError(fmt.Sprintf("package '%s' already exists", packageName))
+		helpers.PrintError("debug: incorrect regular expression at readPackageName")
 	}
-	return lpStateReadingStructName
+	if packageNameRe.Match([]byte(packageName)) {
+		return lpStateUndefined, newIncorrectPackageNameErr(ps.lineNumber, packageName)
+	}
+	ps.currentPackageNode, _ = astTree.AddPackage(packageName)
+	return lpStateReadingStructName, nil
 }
 
-func readStructName(line string, ps *LineParserState) LineParserStateId {
+type ExpectedStructKwErr struct {
+	SyntaxErr
+}
+
+func newExpectedStructKwErr(line int, got string) (eske *ExpectedStructKwErr) {
+	eske.line = line
+	eske.column = 0
+	eske.description = fmt.Sprintf("expected 'package' keyword, got: %s", got)
+	return eske
+}
+
+func readStructName(line string, ps *LineParserState) (LineParserStateId, error) {
 	if ps.stateId != lpStateReadingStructName {
-		printStateConflictError(lpStateReadingStructName, ps.stateId)
+		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingStructName, ps.stateId)
 	}
-	splittedLine := strings.Split(line, " ")
 	if !strings.HasPrefix(line, "struct") {
-		helpers.PrintError(
-			fmt.Sprintf(
-				"expected: 'struct', but got: '%s'",
-				splittedLine[0],
-			),
-		)
+		return lpStateUndefined, newExpectedStructKwErr(ps.lineNumber, strings.Split(line, " ")[0])
+	}
+	idx := len("struct")
+	for idx < len(line) && helpers.EqualsAny(line[idx], ' ', '\t') {
+		idx++
+	}
+	var structNameBuff strings.Builder
+	for idx < len(line) && !helpers.EqualsAny(line[idx], '{') {
+		structNameBuff.WriteByte(line[idx])
+		idx++
 	}
 	structName := splittedLine[1]
 	if structName == "" {
@@ -216,21 +275,151 @@ func readStructName(line string, ps *LineParserState) LineParserStateId {
 			),
 		)
 	}
-	return lpStateReadingStruct
+	return lpStateReadingStruct, nil
 }
 
-func readStruct(line string, ps *LineParserState) LineParserStateId {
+func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 	if ps.stateId != lpStateReadingStruct {
-		printStateConflictError(lpStateReadingStruct, ps.stateId)
+		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingStruct, ps.stateId)
+	}
+	declData, err := parseFieldDeclarations(line, ps.lineNumber)
+	if err != nil {
+		return lpStateUndefined, err
 	}
 	if line == "}" {
-		return lpStateReadingStructName
+		return lpStateReadingStructName, nil
 	}
-	splittedLine := strings.Split(line, " ")
-	isOptional := false
-	if splittedLine[0] == "optional" {
-		isOptional = true
-	}
+	return lpStateReadingStruct, nil
+}
 
-	return lpStateReadingStruct
+type fieldData struct {
+	Name            string
+	DefaultValue    string
+	HasDefaultValue bool
+}
+
+type fieldDeclData struct {
+	IsOptional bool
+	FieldsType string
+	Fields     []fieldData
+}
+
+type SyntaxErr struct {
+	line        int
+	column      int
+	description string
+}
+
+func newSyntaxError(line int, column int, desc string) *SyntaxErr {
+	return &SyntaxErr{line, column, desc}
+}
+
+func (se *SyntaxErr) Error() string {
+	return fmt.Sprintf(
+		"syntax error at %d:%d - %s",
+		se.line,
+		se.column,
+		se.description,
+	)
+}
+
+func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, err error) {
+	const (
+		stateReadingTypeName = iota
+		stateReadingFieldName
+		stateReadingDefaultValue
+	)
+	idx := 0
+	state := stateReadingTypeName
+	if strings.HasPrefix(line, "optional") {
+		result.IsOptional = true
+		idx = len("optional")
+	}
+	var (
+		buffer       strings.Builder
+		pendingField fieldData
+	)
+	for idx < len(line) {
+		switch state {
+		case stateReadingTypeName:
+			for helpers.EqualsAny(line[idx], ' ', '\t') {
+				idx++
+			}
+			for !helpers.EqualsAny(line[idx], ' ', '\t') {
+				buffer.WriteByte(line[idx])
+				idx++
+			}
+			result.FieldsType = buffer.String()
+			state = stateReadingFieldName
+		case stateReadingFieldName:
+			for helpers.EqualsAny(line[idx], ' ', '\t') {
+				idx++
+			}
+			for !helpers.EqualsAny(line[idx], ' ', '\t', ',', '=') && idx < len(line) {
+				buffer.WriteByte(line[idx])
+				idx++
+			}
+			pendingField.Name = buffer.String()
+			if pendingField.Name[0] >= '0' && pendingField.Name[0] <= '9' {
+				return fieldDeclData{},
+					newSyntaxError(
+						lineNumber,
+						idx-len(pendingField.Name),
+						"field name can not start with a number",
+					)
+			}
+			for idx < len(line) && !helpers.EqualsAny(line[idx], '=', ',') {
+				idx++
+			}
+			if line[idx] == '=' {
+				state = stateReadingDefaultValue
+			} else {
+				idx++
+				result.Fields = append(result.Fields, pendingField)
+				pendingField = fieldData{}
+			}
+		case stateReadingDefaultValue:
+			for helpers.EqualsAny(line[idx], ' ', '\t') {
+				idx++
+			}
+			if result.FieldsType == "string" {
+				for !helpers.EqualsAny(line[idx], '"') {
+					idx++
+				}
+				idx++
+				for !helpers.EqualsAny(line[idx], '"') && idx < len(line) {
+					buffer.WriteByte(line[idx])
+					idx++
+				}
+				if idx == len(line) {
+					return fieldDeclData{},
+						newSyntaxError(
+							lineNumber,
+							idx,
+							"expected closing quotes, but got: end of line",
+						)
+				}
+				idx += 2
+			} else {
+				for helpers.EqualsAny(line[idx], ' ', '\t') {
+					idx++
+				}
+				for idx < len(line) && !helpers.EqualsAny(line[idx], ' ', '\t', ',') {
+					buffer.WriteByte(line[idx])
+					idx++
+				}
+				for idx < len(line) && !helpers.EqualsAny(line[idx], ',') {
+					idx++
+				}
+				idx++
+			}
+			pendingField.HasDefaultValue = true
+			pendingField.DefaultValue = buffer.String()
+			result.Fields = append(result.Fields, pendingField)
+			pendingField = fieldData{}
+			state = stateReadingFieldName
+		}
+		buffer.Reset()
+	}
+	return result, nil
 }

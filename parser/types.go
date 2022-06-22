@@ -90,20 +90,33 @@ func ParseParametricType(packageName string, typeName string) (SmeType, error) {
 		for i, t := range paramStrType {
 			paramSmeType[i], err = ParsePrimitiveType(t)
 			if err != nil {
-				paramSmeType[i], err = ParseParametricType(t)
-				if err != nil {
-
-				}
+				paramSmeType[i], err = ParseParametricType(packageName, t)
+			}
+			if err != nil {
+				paramSmeType[i], err = ParseUserDefinedType(packageName, t)
+			}
+			if err != nil {
+				return nil, err
 			}
 		}
+		return tb.SetMapKeyType(paramSmeType[0]).SetMapValueType(paramSmeType[1]).Done(), nil
 	}
 	return nil, errIncorrectType
 }
 
-var userDefinedTypesPool = make(map[string]struct{})
+var unknownUserTypes = make(map[string]map[string]*AstTreeNode)
 
-func ParseUserDefinedType(typeName string) (UserDefinedStruct, error) {
+func ParseUserDefinedType(packageName string, typeName string) (SmeType, error) {
 	node, err := astTree.GetStructNode(packageName, typeName)
+	if err != nil {
+		node, err = astTree.AddStruct(packageName, typeName)
+		if err != nil {
+			return nil, err
+		}
+		unknownUserTypes[packageName][typeName] = node
+	}
+	var tb SmeTypeBuilder
+	return tb.SetType(&UserDefinedStruct{}).SetStructImplNode(node).Done(), nil
 }
 
 type IdAble interface {
@@ -155,6 +168,11 @@ func (tb *SmeTypeBuilder) SetMapKeyType(t SmeType) *SmeTypeBuilder {
 
 func (tb *SmeTypeBuilder) SetMapValueType(t SmeType) *SmeTypeBuilder {
 	tb.pendingType.(*SmeMap).valueType = t
+	return tb
+}
+
+func (tb *SmeTypeBuilder) SetStructImplNode(n *AstTreeNode) *SmeTypeBuilder {
+	tb.pendingType.(*UserDefinedStruct).implNode = n
 	return tb
 }
 
