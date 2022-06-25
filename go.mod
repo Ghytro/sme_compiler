@@ -1,3 +1,3 @@
-module github.com/Ghytro/stme
+module github.com/Ghytro/sme
 
 go 1.17

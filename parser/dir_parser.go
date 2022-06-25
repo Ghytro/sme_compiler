@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Ghytro/stme/helpers"
+	"github.com/Ghytro/sme/helpers"
 )
 
 func Parse(smeFilesDir *string, outLang *string) {

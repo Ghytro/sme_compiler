@@ -1,10 +1,10 @@
-package parser
+package ast
 
 import (
 	"errors"
 	"log"
 
-	"github.com/Ghytro/stme/helpers"
+	"github.com/Ghytro/sme/helpers"
 )
 
 var astTree *AstTree
@@ -14,32 +14,33 @@ var errNoSuchStruct = errors.New("no such struct declared in this package")
 var errStructAlreadyExists = errors.New("struct with this name is already declared in this package")
 var errFieldAlreadyExists = errors.New("field with this name was already declared in this struct")
 
-type AstTreeNode struct {
-	value    interface{}
-	children []*AstTreeNode
-}
-
-type SmeModule struct {
+type AstModuleNode struct {
 	syntaxVer        string
 	cppNamespaceName *string
 	goPackageName    *string
+
+	children []*AstPackageNode
 }
 
-type SmePackage struct {
+type AstPackageNode struct {
 	name string
+
+	children []*AstStructNode
 }
 
-type SmeStruct struct {
+type AstStructNode struct {
 	name string
+
+	children []*AstStructFieldNode
 }
 
-type SmeStructField struct {
+type AstStructFieldNode struct {
 	fieldType SmeType
 	name      string
 }
 
 type AstTree struct {
-	root *AstTreeNode
+	root *AstModuleNode
 }
 
 func InitAstTree(syntaxVer string) {
@@ -47,21 +48,21 @@ func InitAstTree(syntaxVer string) {
 		log.Fatal("Debug: an attempt to initialize AST tree twice while running a program")
 	}
 	astTree = &AstTree{
-		root: &AstTreeNode{
-			value: SmeModule{syntaxVer: syntaxVer},
+		root: &AstModuleNode{
+			syntaxVer: syntaxVer,
 		},
 	}
 }
 
 // returns tree node that contains added package
 // if the package exists returns a node with existing package
-func (t *AstTree) AddPackage(packageName string) (*AstTreeNode, error) {
+func (t *AstTree) AddPackage(packageName string) (*AstPackageNode, error) {
 	for _, c := range t.root.children {
-		if c.value.(*SmePackage).name == packageName {
+		if c.name == packageName {
 			return c, errPackageAlreadyExists
 		}
 	}
-	newPackageNode := &AstTreeNode{value: SmePackage{packageName}}
+	newPackageNode := &AstPackageNode{name: packageName}
 	t.root.children = append(
 		t.root.children,
 		newPackageNode,
@@ -70,10 +71,10 @@ func (t *AstTree) AddPackage(packageName string) (*AstTreeNode, error) {
 }
 
 // returns tree node that contains added struct
-func (t *AstTree) AddStruct(packageName string, structName string) (*AstTreeNode, error) {
-	packageNode := new(AstTreeNode)
+func (t *AstTree) AddStruct(packageName string, structName string) (*AstStructNode, error) {
+	packageNode := new(AstPackageNode)
 	for _, c := range t.root.children {
-		if c.value.(SmePackage).name == packageName {
+		if c.name == packageName {
 			packageNode = c
 			break
 		}
@@ -82,11 +83,11 @@ func (t *AstTree) AddStruct(packageName string, structName string) (*AstTreeNode
 		return nil, errNoSuchPackage
 	}
 	for _, c := range packageNode.children {
-		if c.value.(SmeStruct).name == structName {
+		if c.name == structName {
 			return nil, errStructAlreadyExists
 		}
 	}
-	newStructNode := &AstTreeNode{value: SmeStruct{name: structName}}
+	newStructNode := &AstStructNode{name: structName}
 	packageNode.children = append(
 		packageNode.children,
 		newStructNode,
@@ -94,10 +95,10 @@ func (t *AstTree) AddStruct(packageName string, structName string) (*AstTreeNode
 	return newStructNode, nil
 }
 
-func (t *AstTree) GetStructNode(packageName string, structName string) (*AstTreeNode, error) {
-	packageNode := new(AstTreeNode)
+func (t *AstTree) GetStructNode(packageName string, structName string) (*AstStructNode, error) {
+	packageNode := new(AstPackageNode)
 	for _, c := range t.root.children {
-		if c.value.(SmePackage).name == packageName {
+		if c.name == packageName {
 			packageNode = c
 			break
 		}
@@ -106,17 +107,21 @@ func (t *AstTree) GetStructNode(packageName string, structName string) (*AstTree
 		return nil, errNoSuchPackage
 	}
 	for _, c := range packageNode.children {
-		if c.value.(SmeStruct).name == structName {
+		if c.name == structName {
 			return c, nil
 		}
 	}
 	return nil, errNoSuchStruct
 }
 
-func (t *AstTree) AddStructField(packageName string, structName string, fieldName string, fieldType SmeType) (*AstTreeNode, error) {
-	packageNode := new(AstTreeNode)
+func (t *AstTree) AddStructField(
+	packageName string,
+	structName string,
+	fieldName string,
+	fieldType SmeType) (*AstStructFieldNode, error) {
+	packageNode := new(AstPackageNode)
 	for _, c := range t.root.children {
-		if c.value.(SmePackage).name == packageName {
+		if c.name == packageName {
 			packageNode = c
 			break
 		}
@@ -125,9 +130,9 @@ func (t *AstTree) AddStructField(packageName string, structName string, fieldNam
 		return nil, errNoSuchPackage
 	}
 
-	structNode := new(AstTreeNode)
+	structNode := new(AstStructNode)
 	for _, c := range packageNode.children {
-		if c.value.(SmeStruct).name == structName {
+		if c.name == structName {
 			structNode = c
 			break
 		}
@@ -136,12 +141,12 @@ func (t *AstTree) AddStructField(packageName string, structName string, fieldNam
 		return nil, errNoSuchStruct
 	}
 	for _, c := range structNode.children {
-		if c.value.(SmeStructField).name == fieldName {
+		if c.name == fieldName {
 			return nil, errFieldAlreadyExists
 		}
 	}
 
-	newFieldNode := &AstTreeNode{value: SmeStructField{name: fieldName, fieldType: fieldType}}
+	newFieldNode := &AstStructFieldNode{name: fieldName, fieldType: fieldType}
 	structNode.children = append(
 		structNode.children,
 		newFieldNode,
@@ -150,29 +155,22 @@ func (t *AstTree) AddStructField(packageName string, structName string, fieldNam
 	return newFieldNode, nil
 }
 
-func (t *AstTree) GetStructId(n *AstTreeNode) uint32 {
-	result := uint32(0)
+func (t *AstTree) GetStructId(n *AstStructNode) uint32 {
+	if n == nil {
+		return 0
+	}
 
-	var recF func(*AstTreeNode, *AstTreeNode)
-	recF = func(parent *AstTreeNode, current *AstTreeNode) {
-		if current == n {
-			packageName := parent.value.(SmePackage).name
-			structName := current.value.(SmeStruct).name
-			hash, err := helpers.HashValuesUint32(packageName, structName)
-			if err != nil {
-				log.Fatal("Debug: error in counting hash in GetStructId")
-			}
-			result = hash
-			return
-		}
-		for _, c := range current.children {
-			if result == 0 {
-				recF(current, c)
-			} else {
-				break
+	for _, pNode := range t.root.children {
+		for _, sNode := range pNode.children {
+			if sNode == n {
+				hash, err := helpers.HashValuesUint32(pNode.name, sNode.name)
+				if err != nil {
+					return 0
+				}
+				return hash
 			}
 		}
 	}
-	recF(nil, t.root)
-	return result
+
+	return 0
 }

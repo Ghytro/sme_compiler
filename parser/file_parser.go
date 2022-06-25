@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Ghytro/stme/helpers"
+	"github.com/Ghytro/sme/helpers"
 )
 
 const (

@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 
-	"github.com/Ghytro/stme/helpers"
+	"github.com/Ghytro/sme/helpers"
 )
 
 func main() {
