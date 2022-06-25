@@ -45,3 +45,7 @@ func EqualsAny(c byte, chars ...byte) bool {
 	}
 	return false
 }
+
+func IsAllowedStructChar(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_'
+}

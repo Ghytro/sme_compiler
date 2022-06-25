@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/Ghytro/stme/helpers"
@@ -39,6 +40,137 @@ func IsPrimitiveType(typeName string) bool {
 
 func IsParametricType(typeName string) bool {
 	return strings.HasPrefix(typeName, "list") || strings.HasPrefix(typeName, "map")
+}
+
+func TypeFromString(packageName string, typeName string) (SmeType, error) {
+	t, err := ParsePrimitiveType(typeName)
+	if err == nil {
+		return t, nil
+	}
+	t, err = ParseParametricType(packageName, typeName)
+	if err == nil {
+		return t, nil
+	}
+	t, err = ParseUserDefinedType(packageName, typeName)
+	if err == nil {
+		return t, nil
+	}
+	return nil, errIncorrectType
+}
+
+func intBitSize(t SmeType) int {
+	switch t.Id() {
+	case uint8TypeId, int8TypeId:
+		return 8
+	case uint16TypeId, int16TypeId:
+		return 16
+	case uint32TypeId, int32TypeId:
+		return 32
+	case uint64TypeId, int64TypeId:
+		return 64
+	}
+	return 0
+}
+
+var errNotAnIntType = errors.New("not an int type")
+
+func IntFromString(t SmeType, value string) (interface{}, error) {
+	bitSz := intBitSize(t)
+	if bitSz == 0 {
+		return nil, errNotAnIntType
+	}
+	parsed, err := strconv.ParseInt(value, 10, bitSz)
+	if err != nil {
+		return nil, err
+	}
+	switch t.Id() {
+	case uint8TypeId:
+		return uint8(parsed), nil
+	case int8TypeId:
+		return int8(parsed), nil
+	case uint16TypeId:
+		return uint16(parsed), nil
+	case int16TypeId:
+		return int16(parsed), nil
+	case uint32TypeId:
+		return uint32(parsed), nil
+	case int32TypeId:
+		return int32(parsed), nil
+	case uint64TypeId:
+		return uint64(parsed), nil
+	case int64TypeId:
+		return int64(parsed), nil
+	}
+	return nil, errNotAnIntType
+}
+
+func floatBitSize(t SmeType) int {
+	switch t.Id() {
+	case floatTypeId:
+		return 32
+	case doubleTypeId:
+		return 64
+	}
+	return 0
+}
+
+var errNotFloatType = errors.New("not a float type")
+
+func FloatFromString(t SmeType, value string) (interface{}, error) {
+	bitSz := floatBitSize(t)
+	if bitSz == 0 {
+		return nil, errNotFloatType
+	}
+	parsed, err := strconv.ParseFloat(value, bitSz)
+	if err != nil {
+		return nil, err
+	}
+	switch t.Id() {
+	case floatTypeId:
+		return float32(parsed), nil
+	case doubleTypeId:
+		return float64(parsed), nil
+	}
+	return nil, errNotFloatType
+}
+
+var errNotBoolType = errors.New("not a bool value")
+
+func BoolFromString(value string) (bool, error) {
+	if value == "true" || value == "1" {
+		return true, nil
+	} else if value == "false" || value == "0" {
+		return false, nil
+	}
+	return false, errNotBoolType
+}
+
+var errIncorrectDefaultValue = errors.New("incorrect data type for default value")
+var errUnknownDefaultValueType = errors.New("unknown default value type")
+
+func ParseDefaultValue(t SmeType, value string) (interface{}, error) {
+	if t.IsOptional() && value == "null" {
+		return nil, nil
+	}
+	if t.Id() == stringTypeId {
+		return value, nil
+	}
+	if parsedInt, err := IntFromString(t, value); err == nil {
+		return parsedInt, nil
+	} else if err != errNotAnIntType {
+		return nil, errIncorrectDefaultValue
+	}
+	if parsedFloat, err := FloatFromString(t, value); err == nil {
+		return parsedFloat, nil
+	} else if err != errNotFloatType {
+		return nil, errIncorrectDefaultValue
+	}
+	if parsedBool, err := BoolFromString(value); err != nil {
+		return parsedBool, nil
+	} else if err != errNotBoolType {
+		return nil, errIncorrectDefaultValue
+	}
+	return nil, errUnknownDefaultValueType
 }
 
 func ParsePrimitiveType(typeName string) (SmeType, error) {
@@ -119,12 +251,8 @@ func ParseUserDefinedType(packageName string, typeName string) (SmeType, error) 
 	return tb.SetType(&UserDefinedStruct{}).SetStructImplNode(node).Done(), nil
 }
 
-type IdAble interface {
-	Id() uint32
-}
-
 type SmeType interface {
-	IdAble
+	Id() uint32
 	IsParametric() bool
 	SizeOf() uint // Size of a field in the message converted to bytes
 	setOptionality()
@@ -178,6 +306,10 @@ func (tb *SmeTypeBuilder) SetStructImplNode(n *AstTreeNode) *SmeTypeBuilder {
 
 func (tb *SmeTypeBuilder) Done() SmeType {
 	return tb.pendingType
+}
+
+func (tb *SmeTypeBuilder) Reset() {
+	tb.pendingType = nil
 }
 
 type SmeBaseType struct {

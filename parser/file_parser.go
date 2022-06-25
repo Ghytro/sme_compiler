@@ -78,7 +78,9 @@ func beautifyLine(line string) string {
 		line = line[commentPos:]
 	}
 	//removing extra tabulations in beginning and ending
-	line = strings.Trim(strings.Trim(line, " "), "\t")
+	for strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		line = strings.Trim(strings.Trim(line, " "), "\t")
+	}
 	return line
 }
 
@@ -226,6 +228,50 @@ func newExpectedStructKwErr(line int, got string) (eske *ExpectedStructKwErr) {
 	return eske
 }
 
+type ExpectedOpeningCurlyBraceErr struct {
+	SyntaxErr
+}
+
+func newExpectedOpeningCurlyBraceErr(line int, column int) (eocbe *ExpectedOpeningCurlyBraceErr) {
+	eocbe.line = line
+	eocbe.column = column
+	eocbe.description = "expected opening curly brace"
+	return eocbe
+}
+
+type NoStructNameErr struct {
+	SyntaxErr
+}
+
+func newNoStructNameErr(line int, column int) (nsne *NoStructNameErr) {
+	nsne.line = line
+	nsne.column = column
+	nsne.description = "expected struct name"
+	return nsne
+}
+
+type NoSuchPackageErr struct {
+	SyntaxErr
+}
+
+func newNoSuchPackageErr(line int, column int, packageName string) (nspe *NoStructNameErr) {
+	nspe.line = line
+	nspe.column = column
+	nspe.description = fmt.Sprintf("no such package: %s", packageName)
+	return nspe
+}
+
+type StructAlreadyExistsErr struct {
+	SyntaxErr
+}
+
+func newStructAlreadyExistsErr(line int, column int, structName string) (saee *StructAlreadyExistsErr) {
+	saee.line = line
+	saee.column = column
+	saee.description = fmt.Sprintf("struct already exists: %s", structName)
+	return saee
+}
+
 func readStructName(line string, ps *LineParserState) (LineParserStateId, error) {
 	if ps.stateId != lpStateReadingStructName {
 		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingStructName, ps.stateId)
@@ -238,13 +284,19 @@ func readStructName(line string, ps *LineParserState) (LineParserStateId, error)
 		idx++
 	}
 	var structNameBuff strings.Builder
-	for idx < len(line) && !helpers.EqualsAny(line[idx], '{') {
+	for idx < len(line) && helpers.IsAllowedStructChar(line[idx]) {
 		structNameBuff.WriteByte(line[idx])
 		idx++
 	}
-	structName := splittedLine[1]
+	for idx < len(line) && helpers.EqualsAny(' ', '\t') {
+		idx++
+	}
+	if idx == len(line) || line[idx] != '{' {
+		return lpStateUndefined, newExpectedOpeningCurlyBraceErr(ps.lineNumber, idx)
+	}
+	structName := structNameBuff.String()
 	if structName == "" {
-		helpers.PrintError("struct name should be separated from 'struct' keyword with exactly one space")
+		return lpStateUndefined, newNoStructNameErr(ps.lineNumber, idx)
 	}
 	packageName := ps.currentPackageNode.value.(SmePackage).name
 	var err error
@@ -253,20 +305,9 @@ func readStructName(line string, ps *LineParserState) (LineParserStateId, error)
 	case nil:
 		break
 	case errNoSuchPackage:
-		helpers.PrintError(
-			fmt.Sprintf(
-				"no such package: '%s'",
-				structName,
-			),
-		)
+		return lpStateUndefined, newNoSuchPackageErr(ps.lineNumber, idx, packageName)
 	case errStructAlreadyExists:
-		helpers.PrintError(
-			fmt.Sprintf(
-				"struct '%s' already exists in package '%s'",
-				structName,
-				packageName,
-			),
-		)
+		return lpStateUndefined, newStructAlreadyExistsErr(ps.lineNumber, idx, structName)
 	default:
 		helpers.PrintError(
 			fmt.Sprintf(
@@ -282,12 +323,37 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 	if ps.stateId != lpStateReadingStruct {
 		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingStruct, ps.stateId)
 	}
+	if line == "}" {
+		return lpStateReadingStructName, nil
+	}
 	declData, err := parseFieldDeclarations(line, ps.lineNumber)
 	if err != nil {
 		return lpStateUndefined, err
 	}
-	if line == "}" {
-		return lpStateReadingStructName, nil
+
+	// parse the type of fields
+	packageName := ps.currentPackageNode.value.(SmePackage).name
+	baseType, err := TypeFromString(packageName, declData.FieldsType)
+	if err != nil {
+		return lpStateUndefined, err
+	}
+	if declData.IsOptional {
+		baseType.setOptionality()
+	}
+	for _, f := range declData.Fields {
+		childNode := new(AstTreeNode)
+		var defaultValue interface{} = nil
+		if f.DefaultValue != "" {
+			defaultValue, err = ParseDefaultValue(baseType, f.DefaultValue)
+			if err != nil {
+
+			}
+		}
+		childNode.value = SmeStructField{
+			name:      f.Name,
+			fieldType: tb.Done(),
+		}
+
 	}
 	return lpStateReadingStruct, nil
 }
