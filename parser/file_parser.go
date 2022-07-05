@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Ghytro/sme/ast"
 	"github.com/Ghytro/sme/helpers"
 )
 
@@ -24,8 +25,8 @@ type LineParserFunc func(string, *LineParserState) (LineParserStateId, error)
 type LineParserState struct {
 	stateId            LineParserStateId
 	lineNumber         int
-	currentPackageNode *AstTreeNode
-	currentStructNode  *AstTreeNode
+	currentPackageNode *ast.AstPackageNode
+	currentStructNode  *ast.AstStructNode
 }
 
 func NewLineParserState() *LineParserState {
@@ -78,9 +79,7 @@ func beautifyLine(line string) string {
 		line = line[commentPos:]
 	}
 	//removing extra tabulations in beginning and ending
-	for strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-		line = strings.Trim(strings.Trim(line, " "), "\t")
-	}
+	line = strings.Trim(line, " \t")
 	return line
 }
 
@@ -168,7 +167,7 @@ func readSyntaxVersion(line string, ps *LineParserState) (LineParserStateId, err
 	if !re.Match([]byte(syntaxVer)) {
 		return lpStateUndefined, newIncorrectSyntaxVerErr(ps.lineNumber, syntaxVer)
 	}
-	InitAstTree(syntaxVer)
+	ast.InitAstTree(syntaxVer)
 	return lpStateReadingPackageName, nil
 }
 
@@ -213,7 +212,7 @@ func readPackageName(line string, ps *LineParserState) (LineParserStateId, error
 	if packageNameRe.Match([]byte(packageName)) {
 		return lpStateUndefined, newIncorrectPackageNameErr(ps.lineNumber, packageName)
 	}
-	ps.currentPackageNode, _ = astTree.AddPackage(packageName)
+	ps.currentPackageNode, _ = ast.AddPackage(packageName)
 	return lpStateReadingStructName, nil
 }
 
@@ -298,15 +297,15 @@ func readStructName(line string, ps *LineParserState) (LineParserStateId, error)
 	if structName == "" {
 		return lpStateUndefined, newNoStructNameErr(ps.lineNumber, idx)
 	}
-	packageName := ps.currentPackageNode.value.(SmePackage).name
+	packageName := ps.currentPackageNode.GetName()
 	var err error
-	ps.currentStructNode, err = astTree.AddStruct(packageName, structName)
+	ps.currentStructNode, err = ast.AddStruct(packageName, structName)
 	switch err {
 	case nil:
 		break
-	case errNoSuchPackage:
+	case ast.ErrNoSuchPackage:
 		return lpStateUndefined, newNoSuchPackageErr(ps.lineNumber, idx, packageName)
-	case errStructAlreadyExists:
+	case ast.ErrStructAlreadyExists:
 		return lpStateUndefined, newStructAlreadyExistsErr(ps.lineNumber, idx, structName)
 	default:
 		helpers.PrintError(
@@ -332,14 +331,7 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 	}
 
 	// parse the type of fields
-	packageName := ps.currentPackageNode.value.(SmePackage).name
-	baseType, err := TypeFromString(packageName, declData.FieldsType)
-	if err != nil {
-		return lpStateUndefined, err
-	}
-	if declData.IsOptional {
-		baseType.setOptionality()
-	}
+	packageName := ps.currentPackageNode.GetName()
 	for _, f := range declData.Fields {
 		childNode := new(AstTreeNode)
 		var defaultValue interface{} = nil
@@ -408,12 +400,38 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 	for idx < len(line) {
 		switch state {
 		case stateReadingTypeName:
-			for helpers.EqualsAny(line[idx], ' ', '\t') {
+			for helpers.EqualsAny(line[idx], ' ', '\t') && idx < len(line) {
 				idx++
 			}
-			for !helpers.EqualsAny(line[idx], ' ', '\t') {
+			for !helpers.EqualsAny(line[idx], ' ', '\t') && idx < len(line) {
 				buffer.WriteByte(line[idx])
 				idx++
+			}
+			if ast.IsParametricTypeName(buffer.String()) {
+				var paramBuf strings.Builder
+				for !helpers.EqualsAny(line[idx], ',') && idx < len(line) {
+					paramBuf.WriteByte(line[idx])
+					idx++
+				}
+				keyParam := strings.Trim(paramBuf.String(), " \t")
+				buffer.WriteString(keyParam)
+				paramBuf.Reset()
+				for !helpers.EqualsAny(line[idx], ']') && idx < len(line) {
+					paramBuf.WriteByte(line[idx])
+					idx++
+				}
+				valueParam := strings.Trim(paramBuf.String(), " \t")
+				buffer.WriteString(valueParam)
+				buffer.WriteByte(line[idx])
+			}
+			if !ast.IsPrimitiveTypeName(buffer.String()) && !ast.IsParametricTypeName(buffer.String()) {
+				re, err := regexp.Compile(`[A-Za-z]?[A-Za-z0-9_].([A-Za-z]?[A-Za-z0-9_])?`)
+				if err != nil {
+					helpers.PrintError("debug: unable to compile regexp at parseFieldDeclarations")
+				}
+				if !re.Match([]byte(buffer.String())) {
+					return fieldDeclData{}, newSyntaxError(lineNumber, 0, fmt.Sprintf("incorrect type name: %s", buffer.String()))
+				}
 			}
 			result.FieldsType = buffer.String()
 			state = stateReadingFieldName

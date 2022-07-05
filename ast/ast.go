@@ -8,11 +8,11 @@ import (
 )
 
 var astTree *AstTree
-var errPackageAlreadyExists = errors.New("package with this name already exists in ast tree")
-var errNoSuchPackage = errors.New("no such package declared in AST tree")
-var errNoSuchStruct = errors.New("no such struct declared in this package")
-var errStructAlreadyExists = errors.New("struct with this name is already declared in this package")
-var errFieldAlreadyExists = errors.New("field with this name was already declared in this struct")
+var ErrPackageAlreadyExists = errors.New("package with this name already exists in ast tree")
+var ErrNoSuchPackage = errors.New("no such package declared in AST tree")
+var ErrNoSuchStruct = errors.New("no such struct declared in this package")
+var ErrStructAlreadyExists = errors.New("struct with this name is already declared in this package")
+var ErrFieldAlreadyExists = errors.New("field with this name was already declared in this struct")
 
 type AstModuleNode struct {
 	syntaxVer        string
@@ -28,15 +28,31 @@ type AstPackageNode struct {
 	children []*AstStructNode
 }
 
+func (pn AstPackageNode) GetName() string {
+	return pn.name
+}
+
 type AstStructNode struct {
 	name string
 
 	children []*AstStructFieldNode
 }
 
+func (sn AstStructNode) GetName() string {
+	return sn.name
+}
+
 type AstStructFieldNode struct {
 	fieldType SmeType
 	name      string
+}
+
+func (sn AstStructFieldNode) GetName() string {
+	return sn.name
+}
+
+func (sn AstStructFieldNode) GetFieldType() SmeType {
+	return sn.fieldType
 }
 
 type AstTree struct {
@@ -56,24 +72,24 @@ func InitAstTree(syntaxVer string) {
 
 // returns tree node that contains added package
 // if the package exists returns a node with existing package
-func (t *AstTree) AddPackage(packageName string) (*AstPackageNode, error) {
-	for _, c := range t.root.children {
+func AddPackage(packageName string) (*AstPackageNode, error) {
+	for _, c := range astTree.root.children {
 		if c.name == packageName {
 			return c, errPackageAlreadyExists
 		}
 	}
 	newPackageNode := &AstPackageNode{name: packageName}
-	t.root.children = append(
-		t.root.children,
+	astTree.root.children = append(
+		astTree.root.children,
 		newPackageNode,
 	)
 	return newPackageNode, nil
 }
 
 // returns tree node that contains added struct
-func (t *AstTree) AddStruct(packageName string, structName string) (*AstStructNode, error) {
+func AddStruct(packageName string, structName string) (*AstStructNode, error) {
 	packageNode := new(AstPackageNode)
-	for _, c := range t.root.children {
+	for _, c := range astTree.root.children {
 		if c.name == packageName {
 			packageNode = c
 			break
@@ -95,9 +111,9 @@ func (t *AstTree) AddStruct(packageName string, structName string) (*AstStructNo
 	return newStructNode, nil
 }
 
-func (t *AstTree) GetStructNode(packageName string, structName string) (*AstStructNode, error) {
+func GetStructNode(packageName string, structName string) (*AstStructNode, error) {
 	packageNode := new(AstPackageNode)
-	for _, c := range t.root.children {
+	for _, c := range astTree.root.children {
 		if c.name == packageName {
 			packageNode = c
 			break
@@ -114,13 +130,13 @@ func (t *AstTree) GetStructNode(packageName string, structName string) (*AstStru
 	return nil, errNoSuchStruct
 }
 
-func (t *AstTree) AddStructField(
+func AddStructField(
 	packageName string,
 	structName string,
 	fieldName string,
 	fieldType SmeType) (*AstStructFieldNode, error) {
 	packageNode := new(AstPackageNode)
-	for _, c := range t.root.children {
+	for _, c := range astTree.root.children {
 		if c.name == packageName {
 			packageNode = c
 			break
@@ -155,12 +171,12 @@ func (t *AstTree) AddStructField(
 	return newFieldNode, nil
 }
 
-func (t *AstTree) GetStructId(n *AstStructNode) uint32 {
+func GetStructId(n *AstStructNode) uint32 {
 	if n == nil {
 		return 0
 	}
 
-	for _, pNode := range t.root.children {
+	for _, pNode := range astTree.root.children {
 		for _, sNode := range pNode.children {
 			if sNode == n {
 				hash, err := helpers.HashValuesUint32(pNode.name, sNode.name)

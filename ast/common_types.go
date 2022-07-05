@@ -2,10 +2,8 @@ package ast
 
 import (
 	"errors"
-	"fmt"
 	"log"
-	"reflect"
-	"strconv"
+	"regexp"
 	"strings"
 
 	"github.com/Ghytro/sme/helpers"
@@ -15,276 +13,282 @@ var errNoDefaultValue = errors.New("type has no default value")
 var errIncorrectType = errors.New("incorrect type specified")
 var errListTypeIncorrectFormat = errors.New("incorrect declaration of list")
 var errMapTypeIncorrectFormat = errors.New("incorrect declaration of map")
+var errIncorrectDefaultValue = errors.New("incorrect default value for the type")
 
 // type pool contains pointers to already parsed type
 // to not allocate the memory twice if the type was
 // obtained multiple times while program execution
-var typePool = map[string]map[string]SmeType{
-	"int8": map[string]SmeType{
-		"": &SmeInt8{},
-	},
-	"int16": map[string]SmeType{
-		"": &SmeInt16{},
-	},
-	"int32": map[string]SmeType{
-		"": &SmeInt32{},
-	},
-	"int64": map[string]SmeType{
-		"": &SmeInt64{},
-	},
 
-	"uint8": map[string]SmeType{
-		"": &SmeUint8{},
-	},
-	"uint16": map[string]SmeType{
-		"": &SmeUint16{},
-	},
-	"uint32": map[string]SmeType{
-		"": &SmeUint32{},
-	},
-	"uint64": map[string]SmeType{
-		"": &SmeUint64{},
-	},
-
-	"float": map[string]SmeType{
-		"": &SmeFloat{},
-	},
-	"double": map[string]SmeType{
-		"": &SmeDouble{},
-	},
-	"string": map[string]SmeType{
-		"": &SmeString{},
-	},
-	"bool": map[string]SmeType{
-		"": &SmeBool{},
-	},
-	"char": map[string]SmeType{
-		"": &SmeChar{},
-	},
+type smeTypePool struct {
+	requiredTypes *requiredTypesNode
+	optionalTypes *optionalTypesNode
 }
 
-func IsPrimitiveType(typeName string) bool {
-	_, err := ParsePrimitiveType(typeName)
-	return err == nil
-}
+var errNoSuchType = errors.New("no such type added to pool")
 
-func IsParametricType(typeName string) bool {
-	return strings.HasPrefix(typeName, "list") || strings.HasPrefix(typeName, "map")
-}
-
-func TypeFromString(packageName, typeName string, defaultValue string) (SmeType, error) {
-	if t1, ok := typePool[typeName]; ok { // all the primitive types work here so no need in parsing
-		if t2, ok := t1[defaultValue]; ok {
-			return t2, nil
+func (tp *smeTypePool) getType(typeName string, isOptional bool, hasDefaultValue bool, defaultValue interface{}) (SmeType, error) {
+	if isOptional {
+		if hasDefaultValue {
+			if v, ok := tp.optionalTypes.defaultValueTypes[typeName][defaultValue]; !ok {
+				return nil, errNoSuchType
+			} else {
+				return v, nil
+			}
 		}
-		newType := reflect.New(reflect.ValueOf(t1[""]).Elem().Type()).Interface().(SmeType)
-		if err := newType.SetDefaultValue(defaultValue); err != nil {
-			return nil, err
+		if v, ok := tp.optionalTypes.noDefaultValueTypes[typeName]; !ok {
+			return nil, errNoSuchType
+		} else {
+			return v, nil
 		}
-		t1[defaultValue] = newType
-		return newType, nil
 	}
-
-	t, err = ParseParametricType(packageName, typeName)
-	if err == nil {
-		return t, nil
+	if hasDefaultValue {
+		if v, ok := tp.requiredTypes.defaultValueTypes[typeName][defaultValue.(string)]; !ok {
+			return nil, errNoSuchType
+		} else {
+			return v, nil
+		}
 	}
-	t, err = ParseUserDefinedType(packageName, typeName)
-	if err == nil {
-		return t, nil
+	if v, ok := tp.requiredTypes.noDefaultValueTypes[typeName]; !ok {
+		return nil, errNoSuchType
+	} else {
+		return v, nil
 	}
-	return nil, errIncorrectType
 }
 
-func intBitSize(t SmeType) int {
-	switch t.Id() {
-	case uint8TypeId, int8TypeId:
-		return 8
-	case uint16TypeId, int16TypeId:
-		return 16
-	case uint32TypeId, int32TypeId:
-		return 32
-	case uint64TypeId, int64TypeId:
-		return 64
+func (tp *smeTypePool) addType(typeName string, t SmeType) {
+	if t.IsOptional() {
+		if v, err := t.DefaultValue(); err == nil {
+			tp.optionalTypes.defaultValueTypes[typeName][v] = t
+		} else {
+			tp.optionalTypes.noDefaultValueTypes[typeName] = t
+		}
+	} else {
+		if v, err := t.DefaultValue(); err == nil {
+			tp.requiredTypes.defaultValueTypes[typeName][v] = t
+		} else {
+			tp.requiredTypes.noDefaultValueTypes[typeName] = t
+		}
 	}
-	return 0
 }
 
-var errNotAnIntType = errors.New("not an int type")
+func newSmeTypePool() *smeTypePool {
+	result := new(smeTypePool)
+	result.requiredTypes = newRequiredTypesNode()
+	result.optionalTypes = newOptionalTypesNode()
+	return result
+}
 
-func IntFromString(t SmeType, value string) (interface{}, error) {
-	bitSz := intBitSize(t)
-	if bitSz == 0 {
-		return nil, errNotAnIntType
+type requiredTypesNode struct {
+	noDefaultValueTypes noDefaultValueTypes
+	defaultValueTypes   requiredDefaultValueTypes
+}
+
+func newRequiredTypesNode() *requiredTypesNode {
+	result := new(requiredTypesNode)
+	result.noDefaultValueTypes = makeNoDefaultValueTypes(false)
+	result.defaultValueTypes = make(requiredDefaultValueTypes)
+	return result
+}
+
+type noDefaultValueTypes map[string]SmeType
+
+func makeNoDefaultValueTypes(isOptional bool) noDefaultValueTypes {
+	result := make(noDefaultValueTypes)
+	result = map[string]SmeType{
+		"int8":   &SmeInt8{},
+		"int16":  &SmeInt16{},
+		"int32":  &SmeInt32{},
+		"int64":  &SmeInt64{},
+		"uint8":  &SmeUint8{},
+		"uint16": &SmeUint16{},
+		"uint32": &SmeUint32{},
+		"uint64": &SmeUint64{},
+		"float":  &SmeFloat{},
+		"double": &SmeDouble{},
+		"string": &SmeString{},
+		"bool":   &SmeBool{},
+		"char":   &SmeChar{},
 	}
-	parsed, err := strconv.ParseInt(value, 10, bitSz)
+	if isOptional {
+		for k := range result {
+			result[k].SetOptionality()
+		}
+	}
+	return result
+}
+
+type requiredDefaultValueTypes map[string]map[string]SmeType
+
+type optionalTypesNode struct {
+	noDefaultValueTypes noDefaultValueTypes
+	defaultValueTypes   optionalDefaultValueTypes
+}
+
+func newOptionalTypesNode() *optionalTypesNode {
+	result := new(optionalTypesNode)
+	result.noDefaultValueTypes = makeNoDefaultValueTypes(true)
+	result.defaultValueTypes = make(optionalDefaultValueTypes)
+	return result
+}
+
+type optionalDefaultValueTypes map[string]map[interface{}]SmeType
+
+var typePool = newSmeTypePool()
+
+func IsPrimitiveTypeName(typeName string) bool {
+	re, err := regexp.Compile(`u?int(8|16|32|64)|float|double|string|bool|char`)
 	if err != nil {
-		return nil, err
+		helpers.PrintError("debug: error compiling regex at isPrimitiveTypeName")
 	}
-	switch t.Id() {
-	case uint8TypeId:
-		return uint8(parsed), nil
-	case int8TypeId:
-		return int8(parsed), nil
-	case uint16TypeId:
-		return uint16(parsed), nil
-	case int16TypeId:
-		return int16(parsed), nil
-	case uint32TypeId:
-		return uint32(parsed), nil
-	case int32TypeId:
-		return int32(parsed), nil
-	case uint64TypeId:
-		return uint64(parsed), nil
-	case int64TypeId:
-		return int64(parsed), nil
-	}
-	return nil, errNotAnIntType
+	return re.Match([]byte(typeName))
 }
 
-func floatBitSize(t SmeType) int {
-	switch t.Id() {
-	case floatTypeId:
-		return 32
-	case doubleTypeId:
-		return 64
-	}
-	return 0
+func IsParametricTypeName(typeName string) bool {
+	return strings.HasPrefix(typeName, "map") || strings.HasPrefix(typeName, "list")
 }
 
-var errNotFloatType = errors.New("not a float type")
-
-func FloatFromString(t SmeType, value string) (interface{}, error) {
-	bitSz := floatBitSize(t)
-	if bitSz == 0 {
-		return nil, errNotFloatType
+func unwrapTypeName(packageName, typeName string) (string, error) {
+	if IsPrimitiveTypeName(typeName) {
+		return typeName
 	}
-	parsed, err := strconv.ParseFloat(value, bitSz)
-	if err != nil {
-		return nil, err
-	}
-	switch t.Id() {
-	case floatTypeId:
-		return float32(parsed), nil
-	case doubleTypeId:
-		return float64(parsed), nil
-	}
-	return nil, errNotFloatType
-}
-
-var errNotBoolType = errors.New("not a bool value")
-
-func BoolFromString(value string) (bool, error) {
-	if value == "true" || value == "1" {
-		return true, nil
-	} else if value == "false" || value == "0" {
-		return false, nil
-	}
-	return false, errNotBoolType
-}
-
-var errIncorrectDefaultValue = errors.New("incorrect data type for default value")
-var errUnknownDefaultValueType = errors.New("unknown default value type")
-
-func ParseDefaultValue(t SmeType, value string) (interface{}, error) {
-	if t.IsOptional() && value == "null" {
-		return nil, nil
-	}
-	if t.Id() == stringTypeId {
-		return value, nil
-	}
-	if parsedInt, err := IntFromString(t, value); err == nil {
-		return parsedInt, nil
-	} else if err != errNotAnIntType {
-		return nil, errIncorrectDefaultValue
-	}
-	if parsedFloat, err := FloatFromString(t, value); err == nil {
-		return parsedFloat, nil
-	} else if err != errNotFloatType {
-		return nil, errIncorrectDefaultValue
-	}
-	if parsedBool, err := BoolFromString(value); err != nil {
-		return parsedBool, nil
-	} else if err != errNotBoolType {
-		return nil, errIncorrectDefaultValue
-	}
-	return nil, errUnknownDefaultValueType
-}
-
-func ParsePrimitiveType(typeName string) (SmeType, error) {
-	if smeType, ok := primitiveTypeStringMapping[typeName]; ok {
-		return smeType, nil
-	}
-	return nil, errIncorrectType
-}
-
-func ParseParametricType(packageName string, typeName string) (SmeType, error) {
-	var (
-		tb  SmeTypeBuilder
-		err error
-	)
-	if strings.HasPrefix(typeName, "list") {
-		tb.SetType(&SmeList{})
-		var (
-			paramStrType string
-			paramSmeType SmeType
-		)
-		_, err = fmt.Sscanf(typeName, "list[%s]", &paramStrType)
+	if IsParametricTypeName(typeName) {
+		reslut, err := unwrapParametricTypeName(packageName, typeName)
 		if err != nil {
-			return nil, errListTypeIncorrectFormat
+			return "", err
 		}
-		paramSmeType, err = ParsePrimitiveType(paramStrType)
-		if err != nil {
-			paramSmeType, err = ParseParametricType(packageName, paramStrType)
-			if err != nil {
+	}
 
-			}
+	splittedTypeName := strings.Split(typeName, ".")
+	if len(splittedTypeName) == 1 {
+		if !IsParametricTypeName(typeName) {
+
 		}
-		return tb.SetListValueType(paramSmeType).Done(), nil
 	}
-	if strings.HasPrefix(typeName, "map") {
-		tb.SetType(&SmeMap{})
-		var (
-			paramStrType []string  = make([]string, 2)
-			paramSmeType []SmeType = make([]SmeType, 2)
-		)
-		_, err = fmt.Sscanf(
-			typeName,
-			"map[%s,%s]",
-			&paramStrType[0],
-			&paramStrType[1],
-		)
-		if err != nil {
-			return nil, errMapTypeIncorrectFormat
-		}
-		for i, t := range paramStrType {
-			paramSmeType[i], err = ParsePrimitiveType(t)
-			if err != nil {
-				paramSmeType[i], err = ParseParametricType(packageName, t)
-			}
-			if err != nil {
-				paramSmeType[i], err = ParseUserDefinedType(packageName, t)
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
-		return tb.SetMapKeyType(paramSmeType[0]).SetMapValueType(paramSmeType[1]).Done(), nil
-	}
-	return nil, errIncorrectType
 }
 
-func ParseUserDefinedType(packageName string, typeName string) (SmeType, error) {
-	node, err := astTree.GetStructNode(packageName, typeName)
-	if err != nil {
-		node, err = astTree.AddStruct(packageName, typeName)
-		if err != nil {
-			return nil, err
-		}
-		unknownUserTypes[packageName][typeName] = node
-	}
+func unwrapParametricTypeName(packageName, typeName string) string {
 
 }
+
+func TypeFromString(packageName, typeName string, isOptional bool, hasDefaultValue string, defaultValue interface{}) (SmeType, error) {
+	typeName = unwrapTypeName(packageName, typeName)
+	t, err := typePool.getType()
+
+}
+
+// func TypeFromString(packageName, typeName string, isOptional bool, defaultValue *string) (SmeType, error) {
+// 	if isOptional {
+// 		if t1, ok := typePool[typeName]; ok {
+// 			if t2, ok := t1[*defaultValue]; ok {
+// 				return t2, nil
+// 			}
+// 			newType := reflect.New(reflect.ValueOf(t1[""]).Elem().Type()).Interface().(SmeType)
+// 			if err := newType.SetDefaultValue(*defaultValue); err != nil {
+// 				return nil, err
+// 			}
+// 			t1[*defaultValue] = newType
+// 			return newType, nil
+// 		}
+// 	} else {
+// 		if t1, ok := optionalTypePool[typeName]; ok {
+// 			for val, t := range t1 {
+// 				if val == nil && defaultValue == nil {
+// 					return t, nil
+// 				} else if val != nil {
+// 					if *val == *defaultValue {
+// 						return t, nil
+// 					}
+// 				}
+// 			}
+// 			newType := reflect.New(reflect.ValueOf(t1[nil]).Elem().Type()).Interface().(SmeType)
+// 			newType.SetOptionality()
+// 			if defaultValue != nil {
+// 				if err := newType.SetDefaultValue(*defaultValue); err != nil {
+// 					return nil, err
+// 				}
+// 			}
+// 			t1[defaultValue] = newType
+// 		}
+// 	}
+
+// 	t, err := AddParametricType(packageName, typeName)
+// 	if err == nil {
+// 		return t, nil
+// 	}
+// 	t, err = AddUserDefinedType(packageName, typeName)
+// 	if err == nil {
+// 		return t, nil
+// 	}
+// 	return nil, errIncorrectType
+// }
+
+// var errIncorrectDefaultValue = errors.New("given default value does not match a type")
+
+// func AddParametricType(packageName string, typeName string) (SmeType, error) {
+// 	if strings.HasPrefix(typeName, "list") {
+// 		var paramStrType string
+// 		_, err := fmt.Sscanf(typeName, "list[%s]", &paramStrType)
+// 		if err != nil {
+// 			return nil, errListTypeIncorrectFormat
+// 		}
+// 		valueType, err := TypeFromString(packageName, paramStrType, "")
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		resultType := &SmeList{}
+// 		resultType.SetValueType(valueType)
+// 		typePool[typeName] = map[string]SmeType{"": resultType}
+// 		return resultType, nil
+// 	}
+// 	if strings.HasPrefix(typeName, "map") {
+// 		paramStrType := [2]string{}
+// 		paramSmeType := [2]SmeType{}
+// 		_, err := fmt.Sscanf(
+// 			typeName,
+// 			"map[%s,%s]",
+// 			&paramStrType[0],
+// 			&paramStrType[1],
+// 		)
+// 		if err != nil {
+// 			return nil, errMapTypeIncorrectFormat
+// 		}
+// 		for i, t := range paramStrType {
+// 			paramSmeType[i], err = TypeFromString(packageName, t, "")
+// 			if err != nil {
+// 				return nil, err
+// 			}
+// 		}
+// 		resultType := &SmeMap{}
+// 		resultType.SetKeyType(paramSmeType[0])
+// 		resultType.SetValueType(paramSmeType[1])
+// 		typePool[typeName] = map[string]SmeType{"": resultType}
+// 		return resultType, nil
+// 	}
+// 	return nil, errIncorrectType
+// }
+
+// func AddUserDefinedType(packageName string, typeName string) (SmeType, error) {
+// 	splittedTypeName := strings.Split(typeName, ".")
+// 	if len(splittedTypeName) == 2 {
+// 		packageName, typeName = splittedTypeName[0], splittedTypeName[1]
+// 	} else if len(splittedTypeName) != 1 {
+// 		return nil, errIncorrectType
+// 	}
+// 	node, err := GetStructNode(packageName, typeName)
+// 	if err != nil {
+// 		node, err = AddStruct(packageName, typeName)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
+// 	if len(splittedTypeName) == 2 {
+// 		typeName = packageName + "." + typeName
+// 	}
+// 	strct := &UserDefinedStruct{}
+// 	strct.SetImplNode(node)
+// 	typePool[typeName] = map[string]SmeType{"": strct}
+// 	return strct, nil
+// }
 
 type SmeString struct {
 	SmeBaseType
@@ -370,8 +374,7 @@ func (b *SmeBool) SetDefaultValue(v string) error {
 
 type SmeList struct {
 	SmeBaseType
-	valueType    SmeType
-	defaultValue interface{}
+	valueType SmeType
 }
 
 func (l *SmeList) IsParametric() bool {
@@ -394,11 +397,14 @@ func (l *SmeList) ValueType() SmeType {
 	return l.valueType
 }
 
+func (l *SmeList) SetValueType(t SmeType) {
+	l.valueType = t
+}
+
 type SmeMap struct {
 	SmeBaseType
-	keyType      SmeType
-	valueType    SmeType
-	defaultValue interface{}
+	keyType   SmeType
+	valueType SmeType
 }
 
 func (m *SmeMap) IsParametric() bool {
@@ -417,8 +423,16 @@ func (m *SmeMap) SizeOf() uint {
 	return 4 + 4 // id of maptype + size of map
 }
 
+func (m *SmeMap) SetKeyType(t SmeType) {
+	m.keyType = t
+}
+
 func (m *SmeMap) KeyType() SmeType {
 	return m.keyType
+}
+
+func (m *SmeMap) SetValueType(t SmeType) {
+	m.valueType = t
 }
 
 func (m *SmeMap) ValueType() SmeType {
@@ -435,7 +449,11 @@ func (uds *UserDefinedStruct) IsParametric() bool {
 }
 
 func (uds *UserDefinedStruct) Id() uint32 {
-	return astTree.GetStructId(uds.implNode)
+	return GetStructId(uds.implNode)
+}
+
+func (uds *UserDefinedStruct) SetImplNode(n *AstStructNode) {
+	uds.implNode = n
 }
 
 const (
@@ -458,6 +476,4 @@ const (
 	// parametrised types
 	listTypeId
 	mapTypeId
-
-	userDefinedStructId
 )

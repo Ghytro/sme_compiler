@@ -32,7 +32,6 @@ func (i8 *SmeInt8) IsUnsigned() bool {
 
 type SmeInt16 struct {
 	SmeIntegerBase
-	defaultValue int16
 }
 
 func (i16 *SmeInt16) IsParametric() bool {
@@ -104,8 +103,7 @@ func (i64 *SmeInt64) IsUnsigned() bool {
 }
 
 type SmeUint8 struct {
-	SmeBaseType
-	defaultValue uint8
+	SmeIntegerBase
 }
 
 func (ui8 *SmeUint8) IsParametric() bool {
