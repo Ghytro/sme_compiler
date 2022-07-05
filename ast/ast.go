@@ -75,7 +75,7 @@ func InitAstTree(syntaxVer string) {
 func AddPackage(packageName string) (*AstPackageNode, error) {
 	for _, c := range astTree.root.children {
 		if c.name == packageName {
-			return c, errPackageAlreadyExists
+			return c, ErrPackageAlreadyExists
 		}
 	}
 	newPackageNode := &AstPackageNode{name: packageName}
@@ -96,11 +96,11 @@ func AddStruct(packageName string, structName string) (*AstStructNode, error) {
 		}
 	}
 	if packageNode == nil {
-		return nil, errNoSuchPackage
+		return nil, ErrNoSuchPackage
 	}
 	for _, c := range packageNode.children {
 		if c.name == structName {
-			return nil, errStructAlreadyExists
+			return nil, ErrStructAlreadyExists
 		}
 	}
 	newStructNode := &AstStructNode{name: structName}
@@ -120,14 +120,14 @@ func GetStructNode(packageName string, structName string) (*AstStructNode, error
 		}
 	}
 	if packageNode == nil {
-		return nil, errNoSuchPackage
+		return nil, ErrNoSuchPackage
 	}
 	for _, c := range packageNode.children {
 		if c.name == structName {
 			return c, nil
 		}
 	}
-	return nil, errNoSuchStruct
+	return nil, ErrNoSuchStruct
 }
 
 func AddStructField(
@@ -143,7 +143,7 @@ func AddStructField(
 		}
 	}
 	if packageNode == nil {
-		return nil, errNoSuchPackage
+		return nil, ErrNoSuchPackage
 	}
 
 	structNode := new(AstStructNode)
@@ -154,11 +154,11 @@ func AddStructField(
 		}
 	}
 	if structNode == nil {
-		return nil, errNoSuchStruct
+		return nil, ErrNoSuchStruct
 	}
 	for _, c := range structNode.children {
 		if c.name == fieldName {
-			return nil, errFieldAlreadyExists
+			return nil, ErrFieldAlreadyExists
 		}
 	}
 
