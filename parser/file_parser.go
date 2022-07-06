@@ -40,23 +40,22 @@ func ParseReaderContent(reader *bufio.Reader) error {
 	ps := NewLineParserState()
 	line, err := readLine(reader)
 	for err != nil {
-		line = []byte(beautifyLine(string(line)))
-		if string(line) == "" {
+		line = beautifyLine(string(line))
+		if line == "" {
 			continue
 		}
-		err = parseLine(string(line), ps)
-		if err != nil {
+		if err = parseLine(string(line), ps); err != nil {
 			return err
 		}
 		line, err = readLine(reader)
 	}
-	if line != nil && err != nil {
+	if line != "" && err != nil {
 		helpers.PrintError(err.Error())
 	}
 	return nil
 }
 
-func readLine(reader *bufio.Reader) ([]byte, error) {
+func readLine(reader *bufio.Reader) (string, error) {
 	line := make([]byte, 0)
 	var (
 		isPrefix bool = true
@@ -65,11 +64,11 @@ func readLine(reader *bufio.Reader) ([]byte, error) {
 	)
 	for isPrefix {
 		if linePart, isPrefix, err = reader.ReadLine(); err != nil {
-			return nil, err
+			return "", err
 		}
 		line = append(line, linePart...)
 	}
-	return line, nil
+	return string(line), nil
 }
 
 func beautifyLine(line string) string {
@@ -305,8 +304,6 @@ func readStructName(line string, ps *LineParserState) (LineParserStateId, error)
 		break
 	case ast.ErrNoSuchPackage:
 		return lpStateUndefined, newNoSuchPackageErr(ps.lineNumber, idx, packageName)
-	case ast.ErrStructAlreadyExists:
-		return lpStateUndefined, newStructAlreadyExistsErr(ps.lineNumber, idx, structName)
 	default:
 		helpers.PrintError(
 			fmt.Sprintf(
@@ -332,27 +329,29 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 
 	// parse the type of fields
 	packageName := ps.currentPackageNode.GetName()
+	structName := ps.currentStructNode.GetName()
 	for _, f := range declData.Fields {
-		childNode := new(AstTreeNode)
-		var defaultValue interface{} = nil
-		if f.DefaultValue != "" {
-			defaultValue, err = ParseDefaultValue(baseType, f.DefaultValue)
-			if err != nil {
-
-			}
+		fieldSmeType, err := ast.TypeFromString(
+			packageName,
+			declData.FieldsType,
+			declData.IsOptional,
+			f.HasDefaultValue,
+			f.DefaultValue,
+		)
+		if err != nil {
+			return lpStateUndefined, err
 		}
-		childNode.value = SmeStructField{
-			name:      f.Name,
-			fieldType: tb.Done(),
+		_, err = ast.AddStructField(packageName, structName, f.Name, fieldSmeType)
+		if err != nil {
+			return lpStateUndefined, err
 		}
-
 	}
 	return lpStateReadingStruct, nil
 }
 
 type fieldData struct {
 	Name            string
-	DefaultValue    string
+	DefaultValue    interface{}
 	HasDefaultValue bool
 }
 
@@ -407,7 +406,7 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 				buffer.WriteByte(line[idx])
 				idx++
 			}
-			if ast.IsParametricTypeName(buffer.String()) {
+			if strings.HasPrefix((buffer.String()), "map") {
 				var paramBuf strings.Builder
 				for !helpers.EqualsAny(line[idx], ',') && idx < len(line) {
 					paramBuf.WriteByte(line[idx])
@@ -423,9 +422,17 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 				valueParam := strings.Trim(paramBuf.String(), " \t")
 				buffer.WriteString(valueParam)
 				buffer.WriteByte(line[idx])
-			}
-			if !ast.IsPrimitiveTypeName(buffer.String()) && !ast.IsParametricTypeName(buffer.String()) {
-				re, err := regexp.Compile(`[A-Za-z]?[A-Za-z0-9_].([A-Za-z]?[A-Za-z0-9_])?`)
+			} else if strings.HasPrefix(buffer.String(), "list") {
+				var paramBuf strings.Builder
+				for !helpers.EqualsAny(line[idx], ']') && idx < len(line) {
+					paramBuf.WriteByte(line[idx])
+					idx++
+				}
+				valueParam := strings.Trim(paramBuf.String(), " \t")
+				buffer.WriteString(valueParam)
+				buffer.WriteByte(line[idx])
+			} else if !ast.IsPrimitiveTypeName(buffer.String()) {
+				re, err := regexp.Compile(`[A-Za-z]?[A-Za-z0-9_](.[A-Za-z]?[A-Za-z0-9_])?`)
 				if err != nil {
 					helpers.PrintError("debug: unable to compile regexp at parseFieldDeclarations")
 				}
@@ -467,8 +474,11 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 				idx++
 			}
 			if result.FieldsType == "string" {
-				for !helpers.EqualsAny(line[idx], '"') {
+				for !helpers.EqualsAny(line[idx], '"') && idx < len(line) {
 					idx++
+				}
+				if idx == len(line) {
+					return fieldDeclData{}, newSyntaxError(lineNumber, idx, "expected opening quotes in string default value declaration, but got: end of line")
 				}
 				idx++
 				for !helpers.EqualsAny(line[idx], '"') && idx < len(line) {
@@ -496,9 +506,19 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 					idx++
 				}
 				idx++
+				if buffer.String() == "" {
+					return fieldDeclData{}, newSyntaxError(lineNumber, idx, "expected default value declaration for value, but got: end of line")
+				}
+			}
+			if !result.IsOptional && buffer.String() == "null" {
+				return fieldDeclData{}, newSyntaxError(lineNumber, idx, "non-optional types cannot hold null as default value")
 			}
 			pendingField.HasDefaultValue = true
-			pendingField.DefaultValue = buffer.String()
+			if buffer.String() == "null" {
+				pendingField.DefaultValue = nil
+			} else {
+				pendingField.DefaultValue = buffer.String()
+			}
 			result.Fields = append(result.Fields, pendingField)
 			pendingField = fieldData{}
 			state = stateReadingFieldName

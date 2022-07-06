@@ -4,6 +4,7 @@
 #include <istream>
 #include <ostream>
 #include <vector>
+#include <unordered_map>
 #include <sstream>
 
 class ParseErrorException: public std::exception {
@@ -34,11 +35,7 @@ public:
 
 class NestedStruct: public BaseSmeStruct {
 public:
-    explicit NestedStruct():
-        field1{}
-      , field2{}
-      , field3{}
-      , field4{} {
+    NestedStruct() {
     }
 
     unsigned int GetField1() const {
@@ -93,15 +90,8 @@ private:
 // uint32, int64, double, double, string, list of ints and nested struct
 class ExampleClass1: public BaseSmeStruct {
 public:
-    explicit ExampleClass1():
-        field1{}
-      , field2{}
-      , field3{}
-      , field4{}
-      , field5{}
-      , field6{}
-      , field7{}
-      , field8{} {
+    ExampleClass1() {
+
     }
 
     uint32_t GetField1() const {
@@ -185,6 +175,28 @@ public:
         for (auto &x: field8) {
             x.FromIstream(is);
         }
+
+        // getting map of primitive types
+        // getting size of map
+        is.read(reinterpret_cast<char*>(&currContainerSize), sizeof(currContainerSize));
+        // getting the map itself
+        for (uint32_t i = 0; i < currContainerSize; ++i) {
+            std::pair<uint32_t, uint32_t> p;
+            is.read(reinterpret_cast<char*>(&p.first), sizeof(p.first));
+            is.read(reinterpret_cast<char*>(&p.second), sizeof(p.second));
+            field9.insert(std::move(p));
+        }
+
+        // getting map of user defined structs
+        // getting size of map
+        is.read(reinterpret_cast<char*>(&currContainerSize), sizeof(currContainerSize));
+        // getting the map itself
+        for (uint32_t i = 0; i < currContainerSize; ++i) {
+            std::pair<uint32_t, NestedStruct> p;
+            is.read(reinterpret_cast<char*>(&p.first), sizeof(p.first));
+            p.second.FromIstream(is);
+            field10.insert(std::move(p));
+        }
     }
 
     void WriteToOstream(std::ostream& os) const {
@@ -222,6 +234,8 @@ private:
     std::vector<uint32_t> field6;
     NestedStruct field7;
     std::vector<NestedStruct> field8;
+    std::unordered_map<uint32_t, uint32_t> field9;
+    std::unordered_map<uint32_t, NestedStruct> field10;
 };
 
 template<class T>
