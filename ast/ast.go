@@ -68,7 +68,6 @@ func InitAstTree(syntaxVer string) {
 			syntaxVer: syntaxVer,
 		},
 	}
-	log.Println("ast tree initialized")
 }
 
 // returns tree node that contains added package

@@ -3,7 +3,6 @@ package ast
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Ghytro/sme/helpers"
@@ -307,7 +306,6 @@ func unwrapParametricTypeName(packageName, typeName string) (string, error) {
 			return "", err
 		}
 		unwrappedValue, err := unwrapTypeName(packageName, valueType)
-		log.Printf("unwrapped valueType from list: %s|", unwrappedValue)
 		if err != nil {
 			return "", err
 		}
