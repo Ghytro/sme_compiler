@@ -41,7 +41,6 @@ func ParseFileContent(file *os.File) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		log.Printf("%s|", line)
 		line = beautifyLine(string(line))
 		if line == "" {
 			continue
@@ -49,7 +48,6 @@ func ParseFileContent(file *os.File) error {
 		if err := parseLine(string(line), ps); err != nil {
 			return err
 		}
-		log.Println("read line")
 	}
 	return nil
 }
@@ -74,13 +72,11 @@ var parserFuncs = map[LineParserStateId]LineParserFunc{
 
 // all the methods have the same signature, return value is the new state of parser
 func parseLine(line string, ps *LineParserState) error {
-	log.Printf("parsing line: %s\n", line)
 	var err error
 	ps.stateId, err = parserFuncs[ps.stateId](line, ps)
 	if err != nil {
 		return err
 	}
-	log.Println("here")
 	ps.lineNumber++
 	return nil
 }
@@ -133,7 +129,6 @@ func newIncorrectSyntaxVerErr(line int, got string) (isve *IncorrectSyntaxVerErr
 }
 
 func readSyntaxVersion(line string, ps *LineParserState) (LineParserStateId, error) {
-	log.Println("reading syntax version")
 	if ps.stateId != lpStateReadingSyntaxVer {
 		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingSyntaxVer, ps.stateId)
 	}
@@ -155,7 +150,6 @@ func readSyntaxVersion(line string, ps *LineParserState) (LineParserStateId, err
 	if !syntaxVerCorrect {
 		return lpStateUndefined, newIncorrectSyntaxVerErr(ps.lineNumber, syntaxVer)
 	}
-	log.Printf("syntax version: %s\n", syntaxVer)
 	ast.InitAstTree(syntaxVer)
 	return lpStateReadingPackageName, nil
 }
@@ -330,8 +324,6 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 		return lpStateUndefined, err
 	}
 
-	log.Println(declData)
-
 	// parse the type of fields
 	packageName := ps.currentPackageNode.GetName()
 	structName := ps.currentStructNode.GetName()
@@ -343,12 +335,10 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 			f.HasDefaultValue,
 			f.DefaultValue,
 		)
-		log.Println("got type from string")
 		if err != nil {
 			return lpStateUndefined, err
 		}
 		_, err = ast.AddStructField(packageName, structName, f.Name, fieldSmeType)
-		log.Println("added struct field")
 		if err != nil {
 			return lpStateUndefined, err
 		}
@@ -421,6 +411,7 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 				if idx == len(line) {
 					return fieldDeclData{}, newSyntaxError(lineNumber, idx, "expected closing bracket, but got: end of line")
 				}
+				buffer.WriteByte(']')
 				typeName := strings.ReplaceAll(buffer.String(), " ", "")
 				m, err := helpers.MatchString(`map\[.*,.*\]`, typeName)
 				if err != nil {
