@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"reflect"
+	"regexp"
 )
 
 func Uint32Sum32Hash(ints ...uint32) (uint32, error) {
@@ -48,4 +49,16 @@ func EqualsAny(c byte, chars ...byte) bool {
 
 func IsAllowedStructChar(c byte) bool {
 	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_'
+}
+
+func MatchString(regex string, s string) (bool, error) {
+	re, err := regexp.Compile(regex)
+	if err != nil {
+		return false, err
+	}
+	idx := re.FindStringIndex(s)
+	if idx == nil {
+		return false, nil
+	}
+	return idx[0] == 0 && idx[1] == len(s), nil
 }

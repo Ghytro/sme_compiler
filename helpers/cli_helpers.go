@@ -25,14 +25,14 @@ func PrintWarning(warning string) (int, error) {
 	if warning == "" {
 		return 0, nil
 	}
-	return fmt.Fprintln(os.Stdout, "Warning: "+warning)
+	return fmt.Fprintln(os.Stdout, "Warning: "+warning+"\n")
 }
 
 func PrintError(err string) {
 	if err == "" {
 		return
 	}
-	fmt.Fprint(os.Stderr, "Error: "+err)
+	fmt.Fprint(os.Stderr, "Error: "+err+"\n")
 	os.Exit(1)
 }
 
@@ -69,7 +69,7 @@ func HandleOutLangArgumentErrors(outLang *string) {
 	if *outLang == "" {
 		PrintError(
 			fmt.Sprintf(
-				"language not specifiedm the allowed values are: %s",
+				"language not specified, the allowed values are: %s",
 				strings.Join(GeneratedLanguages[:], ", "),
 			),
 		)
@@ -94,6 +94,9 @@ func HandlerOutDirArgumentErrors(outDir *string) {
 		PrintError("incorrect path for dir with outgoing compiled files")
 	}
 	if !exists {
-		PrintError("incorrect path specified for directory with sme files")
+		if err := os.Mkdir(*outDir, os.ModePerm); err != nil {
+			log.Printf("Debug: error in helpers.HandleOutDirArgumentsErrors %s\n", err)
+			PrintError(fmt.Sprintf("unable to create directory %s", *outDir))
+		}
 	}
 }

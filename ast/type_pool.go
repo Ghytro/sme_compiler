@@ -3,7 +3,7 @@ package ast
 import (
 	"errors"
 	"fmt"
-	"regexp"
+	"log"
 	"strings"
 
 	"github.com/Ghytro/sme/helpers"
@@ -95,8 +95,7 @@ func newSmeTypeByName(typeName string, isOptional, hasDefaulValue bool, defaultV
 	if IsParametricTypeName(typeName) {
 		if strings.HasPrefix(typeName, "list") {
 			baseType = &SmeList{}
-			var valueTypeName string
-			_, err := fmt.Sscanf(typeName, "list[%s]", &valueTypeName)
+			valueTypeName, err := getListValueType(typeName)
 			if err != nil {
 				return nil, err
 			}
@@ -109,8 +108,7 @@ func newSmeTypeByName(typeName string, isOptional, hasDefaulValue bool, defaultV
 		}
 		if strings.HasPrefix(typeName, "map") {
 			baseType = &SmeMap{}
-			var keyTypeName, valueTypeName string
-			_, err := fmt.Sscanf(typeName, "map[%s,%s]", &keyTypeName, &valueTypeName)
+			keyTypeName, valueTypeName, err := getMapKeyValueTypes(typeName)
 			if err != nil {
 				return nil, err
 			}
@@ -153,12 +151,18 @@ func (tp *smeTypePool) addType(typeName string, isOptional, hasDefaultValue bool
 	}
 	if isOptional {
 		if hasDefaultValue {
+			if _, ok := tp.optionalTypes.defaultValueTypes[typeName]; !ok {
+				tp.optionalTypes.defaultValueTypes[typeName] = make(map[interface{}]SmeType)
+			}
 			tp.optionalTypes.defaultValueTypes[typeName][defaultValue] = t
 		} else {
 			tp.optionalTypes.noDefaultValueTypes[typeName] = t
 		}
 	} else {
 		if hasDefaultValue {
+			if _, ok := tp.requiredTypes.defaultValueTypes[typeName]; !ok {
+				tp.requiredTypes.defaultValueTypes[typeName] = make(map[string]SmeType)
+			}
 			tp.requiredTypes.defaultValueTypes[typeName][defaultValue.(string)] = t
 		} else {
 			tp.requiredTypes.noDefaultValueTypes[typeName] = t
@@ -231,11 +235,11 @@ type optionalDefaultValueTypes map[string]map[interface{}]SmeType
 var typePool = newSmeTypePool()
 
 func IsPrimitiveTypeName(typeName string) bool {
-	re, err := regexp.Compile(`u?int(8|16|32|64)|float|double|string|bool|char`)
+	result, err := helpers.MatchString(`u?int(8|16|32|64)|float|double|string|bool|char`, typeName)
 	if err != nil {
 		helpers.PrintError("debug: error compiling regex at isPrimitiveTypeName")
 	}
-	return re.Match([]byte(typeName))
+	return result
 }
 
 func IsParametricTypeName(typeName string) bool {
@@ -257,10 +261,33 @@ func unwrapTypeName(packageName, typeName string) (string, error) {
 	return typeName, nil
 }
 
+func getListValueType(listTypeName string) (string, error) {
+	match, err := helpers.MatchString(`list\[.*\]`, listTypeName)
+	if err != nil {
+		return "", err
+	}
+	if !match {
+		return "", errIncorrectType
+	}
+	return listTypeName[len("list[") : len(listTypeName)-1], nil
+}
+
+func getMapKeyValueTypes(mapTypeName string) (string, string, error) {
+	match, err := helpers.MatchString(`map\[.*\,.*]`, mapTypeName)
+	if err != nil {
+		return "", "", err
+	}
+	if !match {
+		return "", "", errIncorrectType
+	}
+	bracketsContent := mapTypeName[len("map[") : len(mapTypeName)-1]
+	splittedBracketsContent := strings.Split(bracketsContent, ",")
+	return splittedBracketsContent[0], splittedBracketsContent[1], nil
+}
+
 func unwrapParametricTypeName(packageName, typeName string) (string, error) {
 	if strings.HasPrefix(typeName, "map") {
-		var keyType, valueType string
-		_, err := fmt.Sscanf(typeName, "map[%s,%s]", &keyType, &valueType)
+		keyType, valueType, err := getMapKeyValueTypes(typeName)
 		if err != nil {
 			return "", err
 		}
@@ -275,12 +302,12 @@ func unwrapParametricTypeName(packageName, typeName string) (string, error) {
 		return fmt.Sprintf("map[%s,%s]", unwrappedKey, unwrappedValue), nil
 	}
 	if strings.HasPrefix(typeName, "list") {
-		var valueType string
-		_, err := fmt.Sscanf(typeName, "list[%s]", &valueType)
+		valueType, err := getListValueType(typeName)
 		if err != nil {
 			return "", err
 		}
 		unwrappedValue, err := unwrapTypeName(packageName, valueType)
+		log.Printf("unwrapped valueType from list: %s|", unwrappedValue)
 		if err != nil {
 			return "", err
 		}

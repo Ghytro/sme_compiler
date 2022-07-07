@@ -3,7 +3,7 @@ syntax 0.0.1
 package addr_book
 
 struct Person {
-    string phoneNumber, contactName
+    string phoneNumber="12345", contactName
     optional int8 age
     optional string email, homeAddress
     optional char gender

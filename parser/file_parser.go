@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"regexp"
+	"os"
 	"strings"
 
 	"github.com/Ghytro/sme/ast"
@@ -36,39 +36,22 @@ func NewLineParserState() *LineParserState {
 	}
 }
 
-func ParseReaderContent(reader *bufio.Reader) error {
+func ParseFileContent(file *os.File) error {
 	ps := NewLineParserState()
-	line, err := readLine(reader)
-	for err != nil {
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		log.Printf("%s|", line)
 		line = beautifyLine(string(line))
 		if line == "" {
 			continue
 		}
-		if err = parseLine(string(line), ps); err != nil {
+		if err := parseLine(string(line), ps); err != nil {
 			return err
 		}
-		line, err = readLine(reader)
-	}
-	if line != "" && err != nil {
-		helpers.PrintError(err.Error())
+		log.Println("read line")
 	}
 	return nil
-}
-
-func readLine(reader *bufio.Reader) (string, error) {
-	line := make([]byte, 0)
-	var (
-		isPrefix bool = true
-		linePart []byte
-		err      error
-	)
-	for isPrefix {
-		if linePart, isPrefix, err = reader.ReadLine(); err != nil {
-			return "", err
-		}
-		line = append(line, linePart...)
-	}
-	return string(line), nil
 }
 
 func beautifyLine(line string) string {
@@ -91,11 +74,13 @@ var parserFuncs = map[LineParserStateId]LineParserFunc{
 
 // all the methods have the same signature, return value is the new state of parser
 func parseLine(line string, ps *LineParserState) error {
+	log.Printf("parsing line: %s\n", line)
 	var err error
 	ps.stateId, err = parserFuncs[ps.stateId](line, ps)
 	if err != nil {
 		return err
 	}
+	log.Println("here")
 	ps.lineNumber++
 	return nil
 }
@@ -148,6 +133,7 @@ func newIncorrectSyntaxVerErr(line int, got string) (isve *IncorrectSyntaxVerErr
 }
 
 func readSyntaxVersion(line string, ps *LineParserState) (LineParserStateId, error) {
+	log.Println("reading syntax version")
 	if ps.stateId != lpStateReadingSyntaxVer {
 		return lpStateUndefined, newLineParserStateConflictErr(lpStateReadingSyntaxVer, ps.stateId)
 	}
@@ -155,17 +141,21 @@ func readSyntaxVersion(line string, ps *LineParserState) (LineParserStateId, err
 		return lpStateUndefined, newExpectedSyntaxErr(ps.lineNumber, strings.Split(line, " ")[0])
 	}
 	versionOffset := len("syntax")
-	for helpers.EqualsAny(line[versionOffset], ' ', '\t') {
+	for helpers.EqualsAny(line[versionOffset], ' ', '\t') && versionOffset < len(line) {
 		versionOffset++
 	}
+	if versionOffset == len(line) {
+		return lpStateUndefined, newExpectedSyntaxErr(ps.lineNumber, "end of line")
+	}
 	syntaxVer := line[versionOffset:]
-	re, err := regexp.Compile(`[0-9]+.[0-9]+.[0-9]+`)
+	syntaxVerCorrect, err := helpers.MatchString(`[0-9]+.[0-9]+.[0-9]+`, syntaxVer)
 	if err != nil {
 		log.Fatal("Debug: ", err)
 	}
-	if !re.Match([]byte(syntaxVer)) {
+	if !syntaxVerCorrect {
 		return lpStateUndefined, newIncorrectSyntaxVerErr(ps.lineNumber, syntaxVer)
 	}
+	log.Printf("syntax version: %s\n", syntaxVer)
 	ast.InitAstTree(syntaxVer)
 	return lpStateReadingPackageName, nil
 }
@@ -174,7 +164,8 @@ type ExpectedPackageKwErr struct {
 	SyntaxErr
 }
 
-func newExpectedPackageKwErr(line int, got string) (epke *ExpectedPackageKwErr) {
+func newExpectedPackageKwErr(line int, got string) *ExpectedPackageKwErr {
+	epke := new(ExpectedPackageKwErr)
 	epke.line = line
 	epke.column = 0
 	epke.description = fmt.Sprintf("expected 'package' keyword, got: %s", got)
@@ -185,7 +176,8 @@ type IncorrectPackageNameErr struct {
 	SyntaxErr
 }
 
-func newIncorrectPackageNameErr(line int, got string) (ipne *IncorrectPackageNameErr) {
+func newIncorrectPackageNameErr(line int, got string) *IncorrectPackageNameErr {
+	ipne := new(IncorrectPackageNameErr)
 	ipne.line = line
 	ipne.column = len("package")
 	ipne.description = fmt.Sprintf("incorrect format of package name: %s", got)
@@ -204,11 +196,11 @@ func readPackageName(line string, ps *LineParserState) (LineParserStateId, error
 		packageNameOffset++
 	}
 	packageName := line[packageNameOffset:]
-	packageNameRe, err := regexp.Compile(`[A-Za-z][A-Za-z0-9_]+`)
+	packageNameCorrect, err := helpers.MatchString(`[A-Za-z][A-Za-z0-9_]*`, packageName)
 	if err != nil {
 		helpers.PrintError("debug: incorrect regular expression at readPackageName")
 	}
-	if packageNameRe.Match([]byte(packageName)) {
+	if !packageNameCorrect {
 		return lpStateUndefined, newIncorrectPackageNameErr(ps.lineNumber, packageName)
 	}
 	ps.currentPackageNode, _ = ast.AddPackage(packageName)
@@ -219,7 +211,8 @@ type ExpectedStructKwErr struct {
 	SyntaxErr
 }
 
-func newExpectedStructKwErr(line int, got string) (eske *ExpectedStructKwErr) {
+func newExpectedStructKwErr(line int, got string) *ExpectedStructKwErr {
+	eske := new(ExpectedStructKwErr)
 	eske.line = line
 	eske.column = 0
 	eske.description = fmt.Sprintf("expected 'package' keyword, got: %s", got)
@@ -230,7 +223,8 @@ type ExpectedOpeningCurlyBraceErr struct {
 	SyntaxErr
 }
 
-func newExpectedOpeningCurlyBraceErr(line int, column int) (eocbe *ExpectedOpeningCurlyBraceErr) {
+func newExpectedOpeningCurlyBraceErr(line int, column int) *ExpectedOpeningCurlyBraceErr {
+	eocbe := new(ExpectedOpeningCurlyBraceErr)
 	eocbe.line = line
 	eocbe.column = column
 	eocbe.description = "expected opening curly brace"
@@ -241,7 +235,8 @@ type NoStructNameErr struct {
 	SyntaxErr
 }
 
-func newNoStructNameErr(line int, column int) (nsne *NoStructNameErr) {
+func newNoStructNameErr(line int, column int) *NoStructNameErr {
+	nsne := new(NoStructNameErr)
 	nsne.line = line
 	nsne.column = column
 	nsne.description = "expected struct name"
@@ -252,7 +247,8 @@ type NoSuchPackageErr struct {
 	SyntaxErr
 }
 
-func newNoSuchPackageErr(line int, column int, packageName string) (nspe *NoStructNameErr) {
+func newNoSuchPackageErr(line int, column int, packageName string) *NoSuchPackageErr {
+	nspe := new(NoSuchPackageErr)
 	nspe.line = line
 	nspe.column = column
 	nspe.description = fmt.Sprintf("no such package: %s", packageName)
@@ -263,7 +259,8 @@ type StructAlreadyExistsErr struct {
 	SyntaxErr
 }
 
-func newStructAlreadyExistsErr(line int, column int, structName string) (saee *StructAlreadyExistsErr) {
+func newStructAlreadyExistsErr(line int, column int, structName string) *StructAlreadyExistsErr {
+	saee := new(StructAlreadyExistsErr)
 	saee.line = line
 	saee.column = column
 	saee.description = fmt.Sprintf("struct already exists: %s", structName)
@@ -286,8 +283,15 @@ func readStructName(line string, ps *LineParserState) (LineParserStateId, error)
 		structNameBuff.WriteByte(line[idx])
 		idx++
 	}
-	for idx < len(line) && helpers.EqualsAny(' ', '\t') {
+	for idx < len(line) && helpers.EqualsAny(line[idx], ' ', '\t') {
 		idx++
+	}
+	isCorrectStructName, err := helpers.MatchString(`[A-za-z][A-za-z0-9_]*`, structNameBuff.String())
+	if err != nil {
+		helpers.PrintError("debug: incorrect regex at readStructName")
+	}
+	if !isCorrectStructName {
+		return lpStateUndefined, newSyntaxError(ps.lineNumber, len("struct "), fmt.Sprintf("incorrect name of struct: %s", structNameBuff.String()))
 	}
 	if idx == len(line) || line[idx] != '{' {
 		return lpStateUndefined, newExpectedOpeningCurlyBraceErr(ps.lineNumber, idx)
@@ -297,7 +301,6 @@ func readStructName(line string, ps *LineParserState) (LineParserStateId, error)
 		return lpStateUndefined, newNoStructNameErr(ps.lineNumber, idx)
 	}
 	packageName := ps.currentPackageNode.GetName()
-	var err error
 	ps.currentStructNode, err = ast.AddStruct(packageName, structName)
 	switch err {
 	case nil:
@@ -327,6 +330,8 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 		return lpStateUndefined, err
 	}
 
+	log.Println(declData)
+
 	// parse the type of fields
 	packageName := ps.currentPackageNode.GetName()
 	structName := ps.currentStructNode.GetName()
@@ -338,10 +343,12 @@ func readStruct(line string, ps *LineParserState) (LineParserStateId, error) {
 			f.HasDefaultValue,
 			f.DefaultValue,
 		)
+		log.Println("got type from string")
 		if err != nil {
 			return lpStateUndefined, err
 		}
 		_, err = ast.AddStructField(packageName, structName, f.Name, fieldSmeType)
+		log.Println("added struct field")
 		if err != nil {
 			return lpStateUndefined, err
 		}
@@ -399,44 +406,37 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 	for idx < len(line) {
 		switch state {
 		case stateReadingTypeName:
-			for helpers.EqualsAny(line[idx], ' ', '\t') && idx < len(line) {
+			for idx < len(line) && helpers.EqualsAny(line[idx], ' ', '\t') {
 				idx++
 			}
-			for !helpers.EqualsAny(line[idx], ' ', '\t') && idx < len(line) {
+			for idx < len(line) && !helpers.EqualsAny(line[idx], ' ', '\t') {
 				buffer.WriteByte(line[idx])
 				idx++
 			}
-			if strings.HasPrefix((buffer.String()), "map") {
-				var paramBuf strings.Builder
-				for !helpers.EqualsAny(line[idx], ',') && idx < len(line) {
-					paramBuf.WriteByte(line[idx])
+			if strings.HasPrefix((buffer.String()), "map[") {
+				for idx < len(line) && line[idx] != ']' {
+					buffer.WriteByte(line[idx])
 					idx++
 				}
-				keyParam := strings.Trim(paramBuf.String(), " \t")
-				buffer.WriteString(keyParam)
-				paramBuf.Reset()
-				for !helpers.EqualsAny(line[idx], ']') && idx < len(line) {
-					paramBuf.WriteByte(line[idx])
-					idx++
+				if idx == len(line) {
+					return fieldDeclData{}, newSyntaxError(lineNumber, idx, "expected closing bracket, but got: end of line")
 				}
-				valueParam := strings.Trim(paramBuf.String(), " \t")
-				buffer.WriteString(valueParam)
-				buffer.WriteByte(line[idx])
-			} else if strings.HasPrefix(buffer.String(), "list") {
-				var paramBuf strings.Builder
-				for !helpers.EqualsAny(line[idx], ']') && idx < len(line) {
-					paramBuf.WriteByte(line[idx])
-					idx++
+				typeName := strings.ReplaceAll(buffer.String(), " ", "")
+				m, err := helpers.MatchString(`map\[.*,.*\]`, typeName)
+				if err != nil {
+					helpers.PrintError("debug: incorrect regex at parseFieldDeclarations")
 				}
-				valueParam := strings.Trim(paramBuf.String(), " \t")
-				buffer.WriteString(valueParam)
-				buffer.WriteByte(line[idx])
-			} else if !ast.IsPrimitiveTypeName(buffer.String()) {
-				re, err := regexp.Compile(`[A-Za-z]?[A-Za-z0-9_](.[A-Za-z]?[A-Za-z0-9_])?`)
+				if !m {
+					return fieldDeclData{}, newSyntaxError(lineNumber, idx-len(typeName), "incorrect declaration of a map")
+				}
+				buffer.Reset()
+				buffer.WriteString(typeName)
+			} else if !strings.HasPrefix(buffer.String(), "list[") && !ast.IsPrimitiveTypeName(buffer.String()) {
+				correctTypeName, err := helpers.MatchString(`[A-Za-z]?[A-Za-z0-9_](.[A-Za-z]?[A-Za-z0-9_])?`, buffer.String())
 				if err != nil {
 					helpers.PrintError("debug: unable to compile regexp at parseFieldDeclarations")
 				}
-				if !re.Match([]byte(buffer.String())) {
+				if !correctTypeName {
 					return fieldDeclData{}, newSyntaxError(lineNumber, 0, fmt.Sprintf("incorrect type name: %s", buffer.String()))
 				}
 			}
@@ -446,7 +446,7 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 			for helpers.EqualsAny(line[idx], ' ', '\t') {
 				idx++
 			}
-			for !helpers.EqualsAny(line[idx], ' ', '\t', ',', '=') && idx < len(line) {
+			for idx < len(line) && !helpers.EqualsAny(line[idx], ' ', '\t', ',', '=') {
 				buffer.WriteByte(line[idx])
 				idx++
 			}
@@ -462,7 +462,7 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 			for idx < len(line) && !helpers.EqualsAny(line[idx], '=', ',') {
 				idx++
 			}
-			if line[idx] == '=' {
+			if idx < len(line) && line[idx] == '=' {
 				state = stateReadingDefaultValue
 			} else {
 				idx++
@@ -474,14 +474,14 @@ func parseFieldDeclarations(line string, lineNumber int) (result fieldDeclData, 
 				idx++
 			}
 			if result.FieldsType == "string" {
-				for !helpers.EqualsAny(line[idx], '"') && idx < len(line) {
+				for idx < len(line) && !helpers.EqualsAny(line[idx], '"') {
 					idx++
 				}
 				if idx == len(line) {
 					return fieldDeclData{}, newSyntaxError(lineNumber, idx, "expected opening quotes in string default value declaration, but got: end of line")
 				}
 				idx++
-				for !helpers.EqualsAny(line[idx], '"') && idx < len(line) {
+				for idx < len(line) && !helpers.EqualsAny(line[idx], '"') {
 					buffer.WriteByte(line[idx])
 					idx++
 				}

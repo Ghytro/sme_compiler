@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -21,11 +21,15 @@ func smeFileHandler(path string, info os.FileInfo, err error) error {
 	if err != nil {
 		return err
 	}
-
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	ParseReaderContent(bufio.NewReader(file))
+	defer file.Close()
+	if !info.IsDir() {
+		if err := ParseFileContent(file); err != nil {
+			helpers.PrintError(fmt.Sprintf("%s - %s", file.Name(), err.Error()))
+		}
+	}
 	return nil
 }

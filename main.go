@@ -4,6 +4,7 @@ import (
 	"flag"
 
 	"github.com/Ghytro/sme/helpers"
+	"github.com/Ghytro/sme/parser"
 )
 
 func main() {
@@ -15,4 +16,6 @@ func main() {
 	helpers.HandleSmeFilesDirArgumentErrors(smeFilesDir)
 	helpers.HandleOutLangArgumentErrors(outLang)
 	helpers.HandlerOutDirArgumentErrors(outDir)
+
+	parser.Parse(smeFilesDir, outLang)
 }
